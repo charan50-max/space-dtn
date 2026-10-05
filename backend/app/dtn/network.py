@@ -116,31 +116,39 @@ class SpaceNetwork:
         self.nodes = {
             "GS-1": Node(
                 id="GS-1", name="Ground Station Alpha", node_type="ground",
-                x=10, y=82, buffer_capacity=100, buffer_cost=5.0,
+                x=8, y=78, buffer_capacity=100, buffer_cost=5.0,
             ),
             "SAT-1": Node(
                 id="SAT-1", name="Satellite 1", node_type="satellite",
-                x=25, y=55, buffer_capacity=100, buffer_cost=10.0,
+                x=22, y=52, buffer_capacity=100, buffer_cost=10.0,
             ),
             "SAT-2": Node(
                 id="SAT-2", name="Satellite 2", node_type="satellite",
-                x=45, y=30, buffer_capacity=100, buffer_cost=14.0,
+                x=40, y=28, buffer_capacity=100, buffer_cost=14.0,
             ),
             "SAT-3": Node(
                 id="SAT-3", name="Satellite 3", node_type="satellite",
-                x=65, y=55, buffer_capacity=100, buffer_cost=12.0,
+                x=58, y=52, buffer_capacity=100, buffer_cost=12.0,
             ),
             "SAT-4": Node(
                 id="SAT-4", name="Satellite 4", node_type="satellite",
-                x=45, y=75, buffer_capacity=100, buffer_cost=22.0,
+                x=40, y=72, buffer_capacity=100, buffer_cost=22.0,
             ),
             "SAT-5": Node(
                 id="SAT-5", name="Satellite 5", node_type="satellite",
-                x=82, y=30, buffer_capacity=100, buffer_cost=16.0,
+                x=76, y=28, buffer_capacity=100, buffer_cost=16.0,
+            ),
+            "SAT-6": Node(
+                id="SAT-6", name="Satellite 6", node_type="satellite",
+                x=22, y=28, buffer_capacity=100, buffer_cost=15.0,
+            ),
+            "SAT-7": Node(
+                id="SAT-7", name="Satellite 7", node_type="satellite",
+                x=76, y=72, buffer_capacity=100, buffer_cost=15.0,
             ),
             "GS-2": Node(
                 id="GS-2", name="Ground Station Beta", node_type="ground",
-                x=90, y=75, buffer_capacity=100, buffer_cost=5.0,
+                x=92, y=72, buffer_capacity=100, buffer_cost=5.0,
             ),
         }
 
@@ -153,8 +161,14 @@ class SpaceNetwork:
             "L6": Link("L6", "SAT-1", "SAT-4", 2, 70),
             "L7": Link("L7", "SAT-4", "SAT-3", 2, 70),
             "L8": Link("L8", "SAT-2", "SAT-4", 2, 60),
+            "L9": Link("L9", "GS-1", "SAT-6", 2, 85),
             "L10": Link("L10", "SAT-2", "SAT-5", 2, 90),
             "L11": Link("L11", "SAT-1", "SAT-3", 3, 80),
+            "L12": Link("L12", "SAT-6", "SAT-2", 2, 75),
+            "L13": Link("L13", "SAT-5", "SAT-7", 2, 80),
+            "L14": Link("L14", "SAT-7", "GS-2", 2, 95),
+            "L15": Link("L15", "SAT-3", "SAT-7", 3, 70),
+            "L16": Link("L16", "SAT-6", "SAT-4", 2, 65),
         }
 
     def get_neighbors(self, node_id: str) -> List[tuple]:

@@ -194,6 +194,13 @@ class ComparisonService:
     FAIL_TICK = 3
     RESTORE_TICK = 8
 
+    # Congest the primary detour (L10) while L4 is down so live routing must
+    # weigh congestion cost and may prefer SAT-6 / SAT-7 corridors instead.
+    CONGEST_LINK = "L10"
+    CONGEST_TICK = 3
+    CONGEST_CLEAR_TICK = 8
+    CONGEST_LEVEL = 70.0
+
     MAX_TICKS = 40
 
     MODES = ("baseline", "reroute", "adaptive")
@@ -244,6 +251,11 @@ class ComparisonService:
                 sim.disrupt_link(self.FAIL_LINK)
             elif tick == self.RESTORE_TICK:
                 sim.restore_link(self.FAIL_LINK)
+
+            if tick == self.CONGEST_TICK:
+                sim.set_congestion(self.CONGEST_LINK, self.CONGEST_LEVEL)
+            elif tick == self.CONGEST_CLEAR_TICK:
+                sim.set_congestion(self.CONGEST_LINK, 0.0)
 
             sim.step()
 
@@ -331,6 +343,10 @@ class ComparisonService:
                 "fail_link": self.FAIL_LINK,
                 "fail_tick": self.FAIL_TICK,
                 "restore_tick": self.RESTORE_TICK,
+                "congest_link": self.CONGEST_LINK,
+                "congest_tick": self.CONGEST_TICK,
+                "congest_clear_tick": self.CONGEST_CLEAR_TICK,
+                "congest_level": self.CONGEST_LEVEL,
                 "link_capacity": self.sims["adaptive"].link_capacity,
                 "message_count": len(self.SCENARIO_MESSAGES),
             },

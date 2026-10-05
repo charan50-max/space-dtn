@@ -1,6 +1,4 @@
-import { useEffect, useState } from "react";
-
-import StatusBadge from "../components/StatusBadge";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // This page talks to the compare endpoints directly so it does not depend
 // on api.js. If api.js uses a different base URL, change it here too.
@@ -8,16 +6,16 @@ const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 const COMPARE_URL = `${API_BASE}/api/simulation/compare`;
 
 const FALLBACK_POSITIONS = {
-  "GS-1": [10, 82],
-  "SAT-1": [25, 55],
-  "SAT-2": [45, 30],
-  "SAT-3": [65, 55],
-  "SAT-4": [45, 75],
-  "SAT-5": [82, 30],
-  "GS-2": [90, 75],
+  "GS-1": [8, 78],
+  "SAT-1": [22, 52],
+  "SAT-2": [40, 28],
+  "SAT-3": [58, 52],
+  "SAT-4": [40, 72],
+  "SAT-5": [76, 28],
+  "SAT-6": [22, 28],
+  "SAT-7": [76, 72],
+  "GS-2": [92, 72],
 };
-
-const DONE = ["delivered", "dropped"];
 
 async function request(path, method = "GET") {
   const response = await fetch(`${COMPARE_URL}${path}`, { method });
@@ -30,7 +28,49 @@ async function request(path, method = "GET") {
 }
 
 // ------------------------------------------------------------------
-// Narration: one plain sentence describing what is happening right now
+// Scenario phase helpers
+// ------------------------------------------------------------------
+
+function activeChips(data) {
+  if (!data) return [];
+  const { scenario, baseline, adaptive, finished } = data;
+  const tick = adaptive.time;
+  const chips = [];
+
+  chips.push({ id: "plan", label: "Fixed plan", on: true, tone: "muted" });
+  chips.push({ id: "live", label: "Live routing", on: true, tone: "cyan" });
+  chips.push({ id: "fifo", label: "FIFO", on: true, tone: "muted" });
+  chips.push({ id: "priority", label: "Priority", on: tick > 0 || finished, tone: "amber" });
+
+  const linkDown =
+    tick >= scenario.fail_tick && tick < scenario.restore_tick && !finished;
+  chips.push({ id: "down", label: `${scenario.fail_link} down`, on: linkDown, tone: "red" });
+
+  const congested =
+    tick >= (scenario.congest_tick ?? scenario.fail_tick) &&
+    tick < (scenario.congest_clear_tick ?? scenario.restore_tick) &&
+    !finished;
+  chips.push({
+    id: "congest",
+    label: `${scenario.congest_link || "L10"} congested`,
+    on: congested,
+    tone: "amber",
+  });
+
+  const stored =
+    (baseline.statistics.stored || 0) > 0 || (adaptive.statistics.stored || 0) > 0;
+  chips.push({ id: "storage", label: "In storage", on: stored, tone: "violet" });
+
+  const dupes =
+    (baseline.statistics.duplicates || 0) > 0 ||
+    (adaptive.statistics.duplicates || 0) > 0;
+  chips.push({ id: "dup", label: "Duplicate rejected", on: dupes, tone: "green" });
+
+  return chips;
+}
+
+// ------------------------------------------------------------------
+// Narration
 // ------------------------------------------------------------------
 
 function narrate(data) {
@@ -46,55 +86,66 @@ function narrate(data) {
     ? `${scenario.fail_link} (${link.source} to ${link.target})`
     : scenario.fail_link;
 
+  const congestLink = scenario.congest_link || "L10";
+
   if (finished) {
+    const bothFull =
+      bStats.delivered === bStats.total_messages &&
+      aStats.delivered === aStats.total_messages;
     return (
       `Finished. The urgent message arrived after ${aStats.urgent_avg_delay} ticks ` +
       `with Space DTN and ${bStats.urgent_avg_delay} ticks with the baseline. ` +
-      `Both networks delivered every message.`
+      (bothFull
+        ? "Both networks delivered every message."
+        : `Baseline delivered ${bStats.delivered}/${bStats.total_messages}; ` +
+          `Space DTN delivered ${aStats.delivered}/${aStats.total_messages}.`)
     );
   }
 
   if (tick === 0) {
     return (
-      `${scenario.message_count} messages are waiting at ${scenario.source}: ` +
-      `five low-priority and one urgent message that was queued last. ` +
+      `${scenario.message_count} messages wait at ${scenario.source}: ` +
+      `five low-priority and one urgent message queued last. ` +
       `Each link carries ${scenario.link_capacity} messages per tick. ` +
-      `Press Step or Play.`
+      `Press Simulate to watch the run.`
     );
   }
 
   if (tick < scenario.fail_tick) {
     return (
-      "Both networks send over the same links. The baseline sends in arrival " +
-      "order, so the urgent message is still at the back of its queue. " +
-      "Space DTN sent it first."
+      "Both networks use the same healthy links. The baseline sends in arrival " +
+      "order, so the urgent message stays at the back of its queue. " +
+      "Space DTN sent the urgent message first."
     );
   }
 
   if (tick < scenario.restore_tick) {
     return (
-      `Link ${failedLink} has failed. The baseline's plan has no other route, ` +
-      `so its messages wait in storage. Space DTN recalculates from live link ` +
-      `state and sends traffic around the failure.`
+      `Link ${failedLink} has failed and ${congestLink} is congested. ` +
+      `The baseline's fixed plan has no other route, so messages wait in storage. ` +
+      `Space DTN recalculates from live latency, congestion and buffer cost, ` +
+      `and steers around the outage.`
     );
   }
 
   const adaptiveDone = aStats.delivered === aStats.total_messages;
+  const dupes = aStats.duplicates || 0;
 
   return (
-    `Link ${scenario.fail_link} is back. The baseline resumes and works through ` +
-    `its queue in order. ` +
+    `Link ${scenario.fail_link} is back and congestion cleared. ` +
+    `The baseline resumes its plan in arrival order. ` +
     (adaptiveDone
       ? "Space DTN has already delivered everything."
-      : "Space DTN is still finishing its deliveries.")
+      : "Space DTN is still finishing deliveries.") +
+    (dupes > 0 ? " A replayed urgent copy was rejected as a duplicate." : "")
   );
 }
 
 // ------------------------------------------------------------------
-// Small network drawing: links change colour, messages show as counts
+// Network drawing
 // ------------------------------------------------------------------
 
-function MiniNetwork({ sim, urgentId }) {
+function MiniNetwork({ sim, urgentId, plan, tone }) {
   const nodes = sim.network.nodes;
   const links = sim.network.links;
   const messages = sim.messages;
@@ -110,9 +161,9 @@ function MiniNetwork({ sim, urgentId }) {
 
   const waitingAt = {};
   const deliveredAt = {};
+  const hopEdges = new Set();
 
   messages.forEach((message) => {
-    // The replayed duplicate is not one of the six scenario messages.
     if (message.copy_of) return;
 
     if (message.status === "delivered") {
@@ -122,14 +173,40 @@ function MiniNetwork({ sim, urgentId }) {
       waitingAt[message.current_node] =
         (waitingAt[message.current_node] || 0) + 1;
     }
+
+    const path = message.route || [];
+    for (let i = 0; i < path.length - 1; i += 1) {
+      const a = path[i];
+      const b = path[i + 1];
+      hopEdges.add(`${a}|${b}`);
+      hopEdges.add(`${b}|${a}`);
+    }
   });
+
+  const planEdges = new Set();
+  if (plan) {
+    for (let i = 0; i < plan.length - 1; i += 1) {
+      planEdges.add(`${plan[i]}|${plan[i + 1]}`);
+      planEdges.add(`${plan[i + 1]}|${plan[i]}`);
+    }
+  }
 
   const urgent = messages.find((message) => message.id === urgentId);
 
   function linkColour(link) {
     if (!link.active) return "#f87171";
     if (link.congestion >= 50) return "#fbbf24";
-    return "rgba(34, 211, 238, 0.55)";
+    if (hopEdges.has(`${link.source}|${link.target}`)) {
+      return tone === "adaptive" ? "#22d3ee" : "#94a3b8";
+    }
+    return "rgba(148, 163, 184, 0.28)";
+  }
+
+  function linkWidth(link) {
+    if (!link.active) return 1.2;
+    if (hopEdges.has(`${link.source}|${link.target}`)) return 1.1;
+    if (planEdges.has(`${link.source}|${link.target}`)) return 0.85;
+    return 0.55;
   }
 
   return (
@@ -146,28 +223,62 @@ function MiniNetwork({ sim, urgentId }) {
 
         const midX = (from[0] + to[0]) / 2;
         const midY = (from[1] + to[1]) / 2;
+        const onPlan = planEdges.has(`${link.source}|${link.target}`);
+        const used = hopEdges.has(`${link.source}|${link.target}`);
 
         return (
           <g key={link.id}>
+            {onPlan && link.active && !used && (
+              <line
+                x1={from[0]}
+                y1={from[1]}
+                x2={to[0]}
+                y2={to[1]}
+                stroke="rgba(167, 139, 250, 0.35)"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              />
+            )}
             <line
               x1={from[0]}
               y1={from[1]}
               x2={to[0]}
               y2={to[1]}
               stroke={linkColour(link)}
-              strokeWidth={link.active ? 0.7 : 1}
+              strokeWidth={linkWidth(link)}
               strokeDasharray={link.active ? undefined : "2 1.5"}
+              strokeLinecap="round"
+              className={
+                !link.active
+                  ? "cmp-link-down"
+                  : link.congestion >= 50
+                    ? "cmp-link-congest"
+                    : undefined
+              }
             />
             {!link.active && (
               <text
                 x={midX}
                 y={midY - 1.5}
                 textAnchor="middle"
-                fontSize="3.2"
+                fontSize="2.8"
                 fill="#f87171"
                 fontWeight="700"
+                className="cmp-pulse-text"
               >
                 {link.id} down
+              </text>
+            )}
+            {link.active && link.congestion >= 50 && (
+              <text
+                x={midX}
+                y={midY - 1.5}
+                textAnchor="middle"
+                fontSize="2.6"
+                fill="#fbbf24"
+                fontWeight="700"
+              >
+                {link.id} busy
               </text>
             )}
           </g>
@@ -190,27 +301,28 @@ function MiniNetwork({ sim, urgentId }) {
               <circle
                 cx={x}
                 cy={y}
-                r="7"
+                r="6.5"
                 fill="none"
                 stroke={urgent.status === "delivered" ? "#34d399" : "#fbbf24"}
-                strokeWidth="1"
+                strokeWidth="1.1"
+                className="cmp-urgent-pulse"
               />
             )}
 
             <circle
               cx={x}
               cy={y}
-              r="4.2"
+              r="3.6"
               fill={isGround ? "#a78bfa" : "#e2e8f0"}
               stroke="#0b1020"
-              strokeWidth="0.8"
+              strokeWidth="0.7"
             />
 
             <text
               x={x}
-              y={y + 10.5}
+              y={y + 8.8}
               textAnchor="middle"
-              fontSize="3.4"
+              fontSize="2.9"
               fill="#cbd5e1"
               fontWeight="600"
             >
@@ -219,12 +331,12 @@ function MiniNetwork({ sim, urgentId }) {
 
             {waiting > 0 && (
               <g>
-                <circle cx={x + 5} cy={y - 5} r="2.8" fill="#fbbf24" />
+                <circle cx={x + 4.2} cy={y - 4.2} r="2.4" fill="#fbbf24" />
                 <text
-                  x={x + 5}
-                  y={y - 3.9}
+                  x={x + 4.2}
+                  y={y - 3.3}
                   textAnchor="middle"
-                  fontSize="3.2"
+                  fontSize="2.7"
                   fill="#0b1020"
                   fontWeight="800"
                 >
@@ -235,12 +347,12 @@ function MiniNetwork({ sim, urgentId }) {
 
             {delivered > 0 && (
               <g>
-                <circle cx={x - 5} cy={y - 5} r="2.8" fill="#34d399" />
+                <circle cx={x - 4.2} cy={y - 4.2} r="2.4" fill="#34d399" />
                 <text
-                  x={x - 5}
-                  y={y - 3.9}
+                  x={x - 4.2}
+                  y={y - 3.3}
                   textAnchor="middle"
-                  fontSize="3.2"
+                  fontSize="2.7"
                   fill="#0b1020"
                   fontWeight="800"
                 >
@@ -256,10 +368,10 @@ function MiniNetwork({ sim, urgentId }) {
 }
 
 // ------------------------------------------------------------------
-// One side of the comparison
+// Compact side panel
 // ------------------------------------------------------------------
 
-function ModePanel({ title, subtitle, sim, urgentId, tone }) {
+function ModePanel({ title, subtitle, sim, urgentId, tone, plan }) {
   const stats = sim.statistics;
   const urgent = sim.messages.find((message) => message.id === urgentId);
 
@@ -271,6 +383,8 @@ function ModePanel({ title, subtitle, sim, urgentId, tone }) {
         : `${urgent.status.replace("_", " ")} at ${urgent.current_node}`;
   }
 
+  const dupFlash = (stats.duplicates || 0) > 0;
+
   return (
     <section className={`card cmp-panel cmp-${tone}`}>
       <div className="card-header">
@@ -280,20 +394,13 @@ function ModePanel({ title, subtitle, sim, urgentId, tone }) {
         </div>
       </div>
 
-      <div className="card-body">
-        <MiniNetwork sim={sim} urgentId={urgentId} />
-
-        <div className="cmp-legend">
-          <span>
-            <i className="cmp-dot cmp-dot-wait" /> waiting at node
-          </span>
-          <span>
-            <i className="cmp-dot cmp-dot-done" /> delivered
-          </span>
-          <span>
-            <i className="cmp-ring" /> urgent message
-          </span>
-        </div>
+      <div className="card-body cmp-panel-body">
+        <MiniNetwork
+          sim={sim}
+          urgentId={urgentId}
+          plan={plan}
+          tone={tone}
+        />
 
         <div className="cmp-urgent-line">
           <span>Urgent message</span>
@@ -315,50 +422,10 @@ function ModePanel({ title, subtitle, sim, urgentId, tone }) {
             <small>Dropped</small>
             <strong>{stats.dropped}</strong>
           </div>
-          <div>
+          <div className={dupFlash ? "cmp-dup-flash" : undefined}>
             <small>Duplicates rejected</small>
             <strong>{stats.duplicates}</strong>
           </div>
-        </div>
-
-        <div className="table-wrapper">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Message</th>
-                <th>Priority</th>
-                <th>Now at</th>
-                <th>Status</th>
-                <th>Ticks</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sim.messages
-                .filter((message) => !message.copy_of)
-                .map((message) => (
-                <tr key={message.id}>
-                  <td className="mono">{message.id}</td>
-                  <td>
-                    {message.priority_class} · {Math.round(message.priority_score)}
-                  </td>
-                  <td>{message.current_node}</td>
-                  <td>
-                    <StatusBadge status={message.status} />
-                  </td>
-                  <td>{message.delay}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="cmp-events">
-          {sim.events.slice(0, 5).map((event, index) => (
-            <div className="cmp-event" key={`${event.time}-${index}`}>
-              <span>T+{event.time}</span>
-              {event.event}
-            </div>
-          ))}
         </div>
       </div>
     </section>
@@ -382,7 +449,6 @@ const signed = (value) => {
 };
 
 function Scoreboard({ data }) {
-  // "reroute" is missing if the backend predates the three-strategy update.
   const columns = STRATEGIES.filter(([key]) => data[key]);
 
   const rows = [
@@ -418,7 +484,7 @@ function Scoreboard({ data }) {
     typeof routingSaved === "number" && typeof prioritySaved === "number";
 
   return (
-    <section className="card">
+    <section className="card cmp-metrics-card">
       <div className="card-header">
         <div>
           <h2 className="card-title">Scoreboard</h2>
@@ -481,10 +547,10 @@ function Scoreboard({ data }) {
 }
 
 // ------------------------------------------------------------------
-// Link utilization: slots used / slots available while the link was up
+// Link utilization
 // ------------------------------------------------------------------
 
-function UtilizationCard({ data }) {
+function UtilizationCard({ data, animateBars }) {
   const columns = STRATEGIES.filter(([key]) => data[key]);
   const reference = data.adaptive.statistics.link_utilization_by_link;
 
@@ -499,7 +565,7 @@ function UtilizationCard({ data }) {
   );
 
   return (
-    <section className="card">
+    <section className="card cmp-metrics-card">
       <div className="card-header">
         <div>
           <h2 className="card-title">Link utilization</h2>
@@ -547,7 +613,9 @@ function UtilizationCard({ data }) {
                   <div className="cmp-util-cell" key={key}>
                     <div className="cmp-barwrap">
                       <div
-                        className={`cmp-barfill cmp-fill-${key}`}
+                        className={`cmp-barfill cmp-fill-${key}${
+                          animateBars ? "" : " cmp-barfill-instant"
+                        }`}
                         style={{ width: `${Math.min(100, value)}%` }}
                       />
                     </div>
@@ -564,7 +632,7 @@ function UtilizationCard({ data }) {
 }
 
 // ------------------------------------------------------------------
-// Statistical benchmark: many seeded random outage patterns
+// Statistical benchmark
 // ------------------------------------------------------------------
 
 const BENCH_ROWS = [
@@ -681,7 +749,7 @@ function Benchmark() {
     : 1;
 
   return (
-    <section className="card">
+    <section className="card cmp-metrics-card">
       <div className="card-header">
         <div>
           <h2 className="card-title">Statistical benchmark</h2>
@@ -839,39 +907,70 @@ function Compare() {
   const [busy, setBusy] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState("");
+  const [animateBars, setAnimateBars] = useState(true);
+  const playRef = useRef(false);
+  const busyRef = useRef(false);
 
-  async function act(path, method = "POST") {
+  const act = useCallback(async (path, method = "POST") => {
     try {
+      busyRef.current = true;
       setBusy(true);
       setError("");
-      setData(await request(path, method));
+      const json = await request(path, method);
+      setData(json);
+      return json;
     } catch (err) {
       console.error(err);
       setError(err.message || "Could not reach the comparison service.");
+      playRef.current = false;
       setPlaying(false);
+      return null;
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
-    act("/state", "GET");
-  }, []);
+    const timer = setTimeout(() => {
+      act("/state", "GET");
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [act]);
 
   // Play: one tick every 1.1 s until the scenario finishes.
   useEffect(() => {
-    if (!playing || !data || busy) return undefined;
+    playRef.current = playing;
+    if (!playing) return undefined;
 
-    if (data.finished) {
-      setPlaying(false);
-      return undefined;
-    }
+    let cancelled = false;
+    let timer;
 
-    const timer = setTimeout(() => act("/step"), 1100);
-    return () => clearTimeout(timer);
-  }, [playing, data, busy]);
+    const tick = async () => {
+      if (cancelled || !playRef.current || busyRef.current) return;
+
+      const json = await act("/step");
+      if (cancelled || !playRef.current) return;
+
+      if (json?.finished) {
+        playRef.current = false;
+        setPlaying(false);
+        return;
+      }
+
+      timer = setTimeout(tick, 1100);
+    };
+
+    timer = setTimeout(tick, 1100);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [playing, act]);
 
   const finished = Boolean(data?.finished);
+  const chips = activeChips(data);
+  const plan = data?.scenario?.baseline_plan;
 
   return (
     <>
@@ -882,11 +981,10 @@ function Compare() {
           <div className="eyebrow">Baseline vs Space DTN</div>
           <h1 className="page-title">What changes when a link fails</h1>
           <p className="page-description">
-            The same six messages and the same link failure, run through two
-            networks. One follows a fixed plan and sends in arrival order. The
-            other reads live link state and sends urgent data first. A third
-            strategy, FIFO with live routing, sits in the scoreboard so you can
-            see how much comes from routing and how much from priority.
+            Watch the same messages cross a richer mesh. Baseline follows a
+            fixed plan and arrival order. Space DTN reroutes live and sends
+            urgent data first. Metrics below stay the same — press Simulate
+            to see why they move.
           </p>
         </div>
 
@@ -895,8 +993,12 @@ function Compare() {
             className="secondary-button"
             disabled={busy}
             onClick={() => {
+              playRef.current = false;
               setPlaying(false);
-              act("/reset");
+              setAnimateBars(false);
+              act("/reset").then(() => {
+                requestAnimationFrame(() => setAnimateBars(true));
+              });
             }}
           >
             Reset
@@ -910,18 +1012,32 @@ function Compare() {
             Step
           </button>
 
-          <button
-            className="secondary-button"
-            disabled={busy || finished}
-            onClick={() => setPlaying((value) => !value)}
-          >
-            {playing ? "Pause" : "Play"}
-          </button>
+          {playing ? (
+            <button
+              className="secondary-button"
+              disabled={busy}
+              onClick={() => {
+                playRef.current = false;
+                setPlaying(false);
+              }}
+            >
+              Pause
+            </button>
+          ) : (
+            <button
+              className="primary-button"
+              disabled={busy || finished}
+              onClick={() => setPlaying(true)}
+            >
+              Simulate
+            </button>
+          )}
 
           <button
-            className="primary-button"
-            disabled={busy || finished}
+            className="secondary-button"
+            disabled={busy || finished || playing}
             onClick={() => {
+              playRef.current = false;
               setPlaying(false);
               act("/run");
             }}
@@ -941,90 +1057,83 @@ function Compare() {
 
       {data && (
         <>
-          <div className="cmp-narration">
-            <span className="cmp-tick">T+{data.adaptive.time}</span>
-            <p>{narrate(data)}</p>
+          <div className="cmp-hero">
+            <div className="cmp-narration">
+              <span className="cmp-tick">T+{data.adaptive.time}</span>
+              <p>{narrate(data)}</p>
+            </div>
+
+            <div className="cmp-chips" aria-label="Active conditions">
+              {chips.map((chip) => (
+                <span
+                  key={chip.id}
+                  className={`cmp-chip cmp-chip-${chip.tone}${
+                    chip.on ? " is-on" : ""
+                  }`}
+                >
+                  {chip.label}
+                </span>
+              ))}
+            </div>
+
+            <div className="cmp-legend cmp-legend-shared">
+              <span>
+                <i className="cmp-dot cmp-dot-wait" /> waiting at node
+              </span>
+              <span>
+                <i className="cmp-dot cmp-dot-done" /> delivered
+              </span>
+              <span>
+                <i className="cmp-ring" /> urgent message
+              </span>
+              <span>
+                <i className="cmp-line cmp-line-plan" /> baseline plan
+              </span>
+              <span>
+                <i className="cmp-line cmp-line-used" /> path used
+              </span>
+              <span>
+                <i className="cmp-line cmp-line-down" /> link down
+              </span>
+              <span>
+                <i className="cmp-line cmp-line-busy" /> congested
+              </span>
+            </div>
+
+            <div className="cmp-grid">
+              <ModePanel
+                title="Baseline"
+                subtitle="Fixed plan, arrival order"
+                sim={data.baseline}
+                urgentId={data.scenario.urgent_id}
+                tone="baseline"
+                plan={plan}
+              />
+              <ModePanel
+                title="Space DTN"
+                subtitle="Live routing, TinyML priority"
+                sim={data.adaptive}
+                urgentId={data.scenario.urgent_id}
+                tone="adaptive"
+                plan={plan}
+              />
+            </div>
+
+            <p className="cmp-caveat">
+              Priority scores in this scenario are fixed so the run repeats
+              exactly; live TinyML scoring is on the Live Traffic page.
+              Latency is scaled simulation time. The scoreboard below includes
+              FIFO with live routing so you can separate routing from priority.
+              The benchmark further down repeats the comparison over many seeded
+              random outage patterns.
+            </p>
           </div>
 
-          <div className="cmp-grid">
-            <ModePanel
-              title="Baseline"
-              subtitle="Fixed plan, arrival order"
-              sim={data.baseline}
-              urgentId={data.scenario.urgent_id}
-              tone="baseline"
-            />
-            <ModePanel
-              title="Space DTN"
-              subtitle="Live routing, TinyML priority"
-              sim={data.adaptive}
-              urgentId={data.scenario.urgent_id}
-              tone="adaptive"
-            />
+          <div className="cmp-metrics">
+            <Scoreboard data={data} />
+            <UtilizationCard data={data} animateBars={animateBars} />
+            <Benchmark />
           </div>
-
-          <Scoreboard data={data} />
-
-          <UtilizationCard data={data} />
-
-          <Benchmark />
-
-          <section className="card">
-            <div className="card-header">
-              <div>
-                <h2 className="card-title">How the two networks decide</h2>
-                <p className="card-subtitle">
-                  What each side does when the same event happens.
-                </p>
-              </div>
-            </div>
-
-            <div className="card-body cmp-explain">
-              <div>
-                <h3>Baseline: current practice, simplified</h3>
-                <ul>
-                  <li>
-                    Routes come from a plan made in advance for a healthy
-                    network.
-                  </li>
-                  <li>
-                    If a planned link is down, bundles wait in storage until
-                    it returns.
-                  </li>
-                  <li>Bundles go out in the order they arrived.</li>
-                </ul>
-              </div>
-
-              <div>
-                <h3>Space DTN</h3>
-                <ul>
-                  <li>
-                    Recalculates the route from the current node using live
-                    latency, congestion and buffer cost.
-                  </li>
-                  <li>
-                    A small TinyML model scores urgency, so urgent data takes
-                    the first link slots.
-                  </li>
-                  <li>
-                    Every delivery is checked for integrity, and duplicate
-                    copies are rejected.
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            <div className="card-body cmp-caveat">
-              The baseline models a contact plan that has not yet been updated
-              after an unplanned outage. Real operators can publish a new plan;
-              this shows the gap before they do. It is a simplified model, not
-              NASA ION or ESA software. Priority scores in this scenario are
-              fixed inputs so the run repeats exactly; live TinyML scoring is
-              on the Live Traffic page. Latency is scaled simulation time. The
-              benchmark below repeats the comparison over many seeded random
-              outage patterns so the result does not hinge on one scenario.
-            </div>
-          </section>
         </>
       )}
     </>
@@ -1032,6 +1141,30 @@ function Compare() {
 }
 
 const COMPARE_CSS = `
+@keyframes cmp-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@keyframes cmp-ring-pulse {
+  0%, 100% { stroke-opacity: 1; }
+  50% { stroke-opacity: 0.35; }
+}
+@keyframes cmp-dup-glow {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.45); }
+}
+
+.cmp-hero {
+  margin-bottom: 28px;
+}
+.cmp-metrics {
+  display: grid;
+  gap: 20px;
+}
+.cmp-metrics-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 .cmp-util-head, .cmp-util-row {
   display: grid;
   grid-template-columns: 130px repeat(3, minmax(0, 1fr));
@@ -1047,6 +1180,7 @@ const COMPARE_CSS = `
 .cmp-util-cell em { font-style: normal; font-size: 11px; min-width: 32px; text-align: right; opacity: 0.8; }
 .cmp-barwrap { flex: 1; height: 8px; border-radius: 999px; background: rgba(255,255,255,0.08); overflow: hidden; }
 .cmp-barfill { height: 100%; border-radius: inherit; transition: width 0.5s ease; }
+.cmp-barfill-instant { transition: none !important; }
 .cmp-fill-baseline { background: #94a3b8; }
 .cmp-fill-reroute { background: #a78bfa; }
 .cmp-fill-adaptive { background: #22d3ee; }
@@ -1070,12 +1204,13 @@ const COMPARE_CSS = `
 .cmp-barrow { display: grid; grid-template-columns: 140px 1fr 42px; gap: 10px; align-items: center; padding: 4px 0; font-size: 12px; }
 .cmp-barrow strong { text-align: right; }
 .cmp-findings { margin: 14px 0 4px; padding-left: 18px; line-height: 1.65; font-size: 14px; }
+
 .cmp-narration {
   display: flex;
   gap: 16px;
   align-items: center;
   padding: 16px 20px;
-  margin-bottom: 20px;
+  margin-bottom: 14px;
   border: 1px solid rgba(34, 211, 238, 0.28);
   border-radius: 14px;
   background: rgba(34, 211, 238, 0.06);
@@ -1088,21 +1223,63 @@ const COMPARE_CSS = `
   color: #22d3ee;
   min-width: 64px;
 }
-.cmp-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
-  margin-bottom: 20px;
+
+.cmp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
 }
-@media (max-width: 1100px) { .cmp-grid { grid-template-columns: 1fr; } }
-.cmp-panel.cmp-baseline { border-top: 3px solid #94a3b8; }
-.cmp-panel.cmp-adaptive { border-top: 3px solid #22d3ee; }
-.cmp-network { width: 100%; max-height: 300px; display: block; }
-.cmp-legend {
-  display: flex; flex-wrap: wrap; gap: 16px;
-  font-size: 12px; opacity: 0.75; margin: 6px 0 14px;
+.cmp-chip {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.1);
+  opacity: 0.35;
+  transition: opacity 0.25s ease, border-color 0.25s ease, background 0.25s ease;
 }
-.cmp-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.cmp-chip.is-on { opacity: 1; }
+.cmp-chip-muted.is-on {
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.45);
+  background: rgba(148, 163, 184, 0.1);
+}
+.cmp-chip-cyan.is-on {
+  color: #22d3ee;
+  border-color: rgba(34, 211, 238, 0.45);
+  background: rgba(34, 211, 238, 0.1);
+}
+.cmp-chip-amber.is-on {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.1);
+}
+.cmp-chip-red.is-on {
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.5);
+  background: rgba(248, 113, 113, 0.12);
+  animation: cmp-pulse 1.4s ease-in-out infinite;
+}
+.cmp-chip-violet.is-on {
+  color: #a78bfa;
+  border-color: rgba(167, 139, 250, 0.45);
+  background: rgba(167, 139, 250, 0.12);
+}
+.cmp-chip-green.is-on {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.5);
+  background: rgba(52, 211, 153, 0.12);
+  animation: cmp-pulse 1.4s ease-in-out infinite;
+}
+
+.cmp-legend-shared {
+  display: flex; flex-wrap: wrap; gap: 14px 18px;
+  font-size: 12px; opacity: 0.78; margin: 0 0 16px;
+}
+.cmp-legend-shared span { display: inline-flex; align-items: center; gap: 6px; }
 .cmp-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .cmp-dot-wait { background: #fbbf24; }
 .cmp-dot-done { background: #34d399; }
@@ -1110,16 +1287,45 @@ const COMPARE_CSS = `
   width: 12px; height: 12px; border-radius: 50%;
   border: 2px solid #fbbf24; display: inline-block;
 }
+.cmp-line {
+  width: 18px; height: 0;
+  border-top: 2px solid currentColor;
+  display: inline-block;
+}
+.cmp-line-plan { color: rgba(167, 139, 250, 0.8); border-top-width: 3px; }
+.cmp-line-used { color: #22d3ee; }
+.cmp-line-down { color: #f87171; border-top-style: dashed; }
+.cmp-line-busy { color: #fbbf24; }
+
+.cmp-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  margin-bottom: 14px;
+}
+@media (max-width: 1100px) { .cmp-grid { grid-template-columns: 1fr; } }
+.cmp-panel.cmp-baseline { border-top: 3px solid #94a3b8; }
+.cmp-panel.cmp-adaptive { border-top: 3px solid #22d3ee; }
+.cmp-panel-body { display: flex; flex-direction: column; gap: 12px; }
+.cmp-network { width: 100%; height: auto; aspect-ratio: 1.35 / 1; max-height: 380px; display: block; }
+.cmp-urgent-pulse { animation: cmp-ring-pulse 1.2s ease-in-out infinite; }
+.cmp-pulse-text { animation: cmp-pulse 1.4s ease-in-out infinite; }
+.cmp-link-down { filter: drop-shadow(0 0 1px rgba(248, 113, 113, 0.6)); }
+.cmp-link-congest { filter: drop-shadow(0 0 1px rgba(251, 191, 36, 0.5)); }
+
 .cmp-urgent-line {
   display: flex; justify-content: space-between; gap: 12px;
-  padding: 10px 14px; margin-bottom: 12px;
+  padding: 10px 14px;
   border: 1px solid rgba(251, 191, 36, 0.35);
   border-radius: 10px; background: rgba(251, 191, 36, 0.06);
   font-size: 14px;
 }
 .cmp-mini-stats {
   display: grid; grid-template-columns: repeat(4, 1fr);
-  gap: 10px; margin-bottom: 14px;
+  gap: 10px;
+}
+@media (max-width: 700px) {
+  .cmp-mini-stats { grid-template-columns: repeat(2, 1fr); }
 }
 .cmp-mini-stats div {
   padding: 10px 12px; border-radius: 10px;
@@ -1128,17 +1334,13 @@ const COMPARE_CSS = `
 }
 .cmp-mini-stats small { display: block; font-size: 11px; opacity: 0.65; }
 .cmp-mini-stats strong { font-size: 18px; }
-.cmp-events { margin-top: 14px; display: grid; gap: 4px; }
-.cmp-event { font-size: 12px; opacity: 0.8; }
-.cmp-event span { color: #22d3ee; margin-right: 8px; font-weight: 700; }
-.cmp-result { font-size: 15px; line-height: 1.55; }
-.cmp-explain {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px;
+.cmp-dup-flash {
+  border-color: rgba(52, 211, 153, 0.45) !important;
+  background: rgba(52, 211, 153, 0.08) !important;
+  animation: cmp-dup-glow 1.6s ease-in-out infinite;
 }
-@media (max-width: 900px) { .cmp-explain { grid-template-columns: 1fr; } }
-.cmp-explain h3 { margin: 0 0 8px; font-size: 15px; }
-.cmp-explain ul { margin: 0; padding-left: 18px; line-height: 1.6; font-size: 14px; }
-.cmp-caveat { font-size: 13px; line-height: 1.6; opacity: 0.7; }
+.cmp-result { font-size: 15px; line-height: 1.55; }
+.cmp-caveat { font-size: 13px; line-height: 1.6; opacity: 0.7; margin: 0; }
 .cmp-error {
   padding: 12px 16px; margin-bottom: 16px; border-radius: 10px;
   border: 1px solid rgba(248, 113, 113, 0.5);

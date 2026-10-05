@@ -164,6 +164,8 @@ function Messages({ state, refreshState }) {
                     <option>SAT-3</option>
                     <option>SAT-4</option>
                     <option>SAT-5</option>
+                    <option>SAT-6</option>
+                    <option>SAT-7</option>
                     <option>GS-2</option>
                   </select>
                 </div>
@@ -185,6 +187,8 @@ function Messages({ state, refreshState }) {
                     <option>SAT-3</option>
                     <option>SAT-4</option>
                     <option>SAT-5</option>
+                    <option>SAT-6</option>
+                    <option>SAT-7</option>
                     <option>GS-2</option>
                   </select>
                 </div>

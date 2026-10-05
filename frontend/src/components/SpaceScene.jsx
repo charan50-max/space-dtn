@@ -28,7 +28,7 @@ import "./dtn-callouts.css";
 const EARTH_RADIUS = 1.65;
 
 /*
- * Five deliberately separated orbital planes.
+ * Seven deliberately separated orbital planes.
  * velocity is intentionally very small so the motion is slow and readable.
  */
 const ORBITS = {
@@ -66,6 +66,20 @@ const ORBITS = {
     raan: 4.35,
     phase: 5.25,
     velocity: 0.0088,
+  },
+  "SAT-6": {
+    radius: 4.50,
+    inclination: 0.28,
+    raan: 5.20,
+    phase: 0.90,
+    velocity: 0.0090,
+  },
+  "SAT-7": {
+    radius: 5.25,
+    inclination: -0.20,
+    raan: 0.75,
+    phase: 3.60,
+    velocity: 0.0082,
   },
 };
 

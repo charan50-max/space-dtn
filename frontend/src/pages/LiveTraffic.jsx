@@ -5,7 +5,17 @@ import useArrivals from "../components/useArrivals";
 import "./traffic.css";
 import "../components/dtn-callouts.css";
 
-const NODES = ["GS-1", "SAT-1", "SAT-2", "SAT-3", "SAT-4", "SAT-5", "GS-2"];
+const NODES = [
+  "GS-1",
+  "SAT-1",
+  "SAT-2",
+  "SAT-3",
+  "SAT-4",
+  "SAT-5",
+  "SAT-6",
+  "SAT-7",
+  "GS-2",
+];
 
 const STATUS = {
   queued: { label: "Queued", group: "waiting" },
