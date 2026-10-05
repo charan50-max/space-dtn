@@ -1,0 +1,88 @@
+{
+    "project": "Space DTN - Disruption Tolerant Space Data Routing",
+    "task": "TinyML message priority classification",
+    "target": {
+        "name": "priority",
+        "class_0": "Normal / Low Priority",
+        "class_1": "Anomalous / High Priority",
+        "note": "Priority is a derived proxy from the source satellite anomaly label. The original dataset does not contain a native DTN priority label."
+    },
+    "dataset": {
+        "training_samples": 160000,
+        "testing_samples": 40000,
+        "feature_count": 9,
+        "features": [
+            "value",
+            "sampling",
+            "channel_id",
+            "z_score",
+            "abs_z_score",
+            "delta_value",
+            "abs_delta",
+            "rolling_mean_5",
+            "rolling_std_5"
+        ]
+    },
+    "models_evaluated": [
+        "Logistic Regression",
+        "Decision Tree",
+        "Random Forest",
+        "Extra Trees"
+    ],
+    "selection_rule": "0.60 * F1 + 0.40 * Recall",
+    "selected_model": "Random Forest",
+    "selected_model_metrics": {
+        "model": "Random Forest",
+        "accuracy": 0.747075,
+        "precision": 0.775937,
+        "recall": 0.324207,
+        "f1": 0.45733,
+        "macro_f1": 0.646221,
+        "balanced_accuracy": 0.639181,
+        "roc_auc": 0.789305,
+        "pr_auc": 0.65934,
+        "true_negative": 25620,
+        "false_positive": 1231,
+        "false_negative": 8886,
+        "true_positive": 4263,
+        "false_positive_rate": 0.045846,
+        "false_negative_rate": 0.675793,
+        "training_time_seconds": 2.2944,
+        "model_size_bytes": 1002265,
+        "model_size_kb": 978.77,
+        "model_size_mb": 0.9558,
+        "inference_batch_size": 1000,
+        "inference_latency_ms": 31.1319,
+        "inference_per_sample_ms": 0.031132,
+        "predictions_per_second": 32121.37,
+        "model_type": "RandomForestClassifier",
+        "tree_count": 50,
+        "max_depth": 8,
+        "total_nodes": 12256,
+        "total_leaves": 6153,
+        "training_samples": 160000,
+        "testing_samples": 40000,
+        "feature_count": 9,
+        "features": [
+            "value",
+            "sampling",
+            "channel_id",
+            "z_score",
+            "abs_z_score",
+            "delta_value",
+            "abs_delta",
+            "rolling_mean_5",
+            "rolling_std_5"
+        ]
+    },
+    "system": {
+        "python_version": "3.14.0 (tags/v3.14.0:ebf955d, Oct  7 2025, 10:15:03) [MSC v.1944 64 bit (AMD64)]",
+        "platform": "Windows-11-10.0.26200-SP0",
+        "processor": "AMD64 Family 25 Model 124 Stepping 0, AuthenticAMD"
+    },
+    "resource_metrics": {
+        "model_size_kb": 978.77,
+        "inference_per_sample_ms": 0.031132,
+        "predictions_per_second": 32121.37
+    }
+}

@@ -1,0 +1,24 @@
+@"
+# secrets
+.env
+backend/.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# node
+node_modules/
+frontend/dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# archives (already unpacked in the repo)
+*.zip
+"@ | Set-Content -Encoding utf8 .gitignore

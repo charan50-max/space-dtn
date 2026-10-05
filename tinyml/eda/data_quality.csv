@@ -1,0 +1,11 @@
+,dtype,missing_count,missing_pct,unique_values
+value,float64,0,0.0,200000
+sampling,int64,0,0.0,2
+channel_id,int64,0,0.0,9
+z_score,float64,0,0.0,200000
+abs_z_score,float64,0,0.0,200000
+delta_value,float64,0,0.0,200000
+abs_delta,float64,0,0.0,200000
+rolling_mean_5,float64,0,0.0,118842
+rolling_std_5,float64,0,0.0,120855
+priority,int64,0,0.0,2

@@ -1,0 +1,128 @@
+{
+    "project": "Space DTN - Disruption Tolerant Space Data Routing & Priority Engine",
+    "task": "TinyML satellite telemetry priority classification",
+    "target_definition": {
+        "source_label": "anomaly",
+        "derived_target": "priority",
+        "class_0": "Normal / Low Priority",
+        "class_1": "Anomalous / High Priority",
+        "note": "The source dataset has no native DTN priority label. Anomaly is used as a documented urgency proxy."
+    },
+    "features": [
+        "value",
+        "sampling",
+        "channel_id",
+        "z_score",
+        "abs_z_score",
+        "delta_value",
+        "abs_delta",
+        "rolling_mean_5",
+        "rolling_std_5"
+    ],
+    "dataset": {
+        "training_samples": 160000,
+        "testing_samples": 40000,
+        "training_high_priority_rate": 0.33022499084472656,
+        "testing_high_priority_rate": 0.328725
+    },
+    "architecture": {
+        "input_features": 9,
+        "hidden_layer_1": 16,
+        "hidden_layer_2": 8,
+        "output_units": 1,
+        "output_activation": "sigmoid",
+        "optimizer": "Adam",
+        "loss": "binary_crossentropy",
+        "epochs": 30,
+        "batch_size": 128
+    },
+    "training": {
+        "training_time_seconds": 63.14570370002184,
+        "tensorflow_version": "2.22.0-rc0",
+        "python_version": "3.14.0 (tags/v3.14.0:ebf955d, Oct  7 2025, 10:15:03) [MSC v.1944 64 bit (AMD64)]",
+        "platform": "Windows-11-10.0.26200-SP0"
+    },
+    "models": {
+        "keras": "C:\\Users\\Charan\\Desktop\\space_dtn\\tinyml\\models\\tinyml_model.keras",
+        "fp32_tflite": "C:\\Users\\Charan\\Desktop\\space_dtn\\tinyml\\models\\tinyml_model_fp32.tflite",
+        "int8_tflite": "C:\\Users\\Charan\\Desktop\\space_dtn\\tinyml\\models\\tinyml_model_int8.tflite"
+    },
+    "fp32": {
+        "model": "TensorFlow Lite FP32",
+        "accuracy": 0.7376,
+        "precision": 0.7290623381108616,
+        "recall": 0.3210890562019926,
+        "f1": 0.44582893347412883,
+        "macro_f1": 0.6369662191117779,
+        "balanced_accuracy": 0.6313277391545884,
+        "roc_auc": 0.7803360094700618,
+        "pr_auc": 0.625204398513945,
+        "true_negative": 25282,
+        "false_positive": 1569,
+        "false_negative": 8927,
+        "true_positive": 4222,
+        "false_positive_rate": 0.05843357789281591,
+        "false_negative_rate": 0.6789109437980074,
+        "inference_total_seconds": 0.28543779999017715,
+        "inference_per_sample_ms": 0.0071359449997544285,
+        "predictions_per_second": 140135.6092338735,
+        "model_size_bytes": 3600,
+        "model_size_kb": 3.515625,
+        "input_dtype": "<class 'numpy.float32'>",
+        "output_dtype": "<class 'numpy.float32'>",
+        "input_shape": [
+            1,
+            9
+        ],
+        "output_shape": [
+            1,
+            1
+        ],
+        "input_quantization_scale": 0.0,
+        "input_quantization_zero_point": 0,
+        "output_quantization_scale": 0.0,
+        "output_quantization_zero_point": 0
+    },
+    "int8": {
+        "model": "TensorFlow Lite INT8",
+        "accuracy": 0.710375,
+        "precision": 0.5809691447504659,
+        "recall": 0.42672446573883943,
+        "f1": 0.49204191695532074,
+        "macro_f1": 0.6447410815696472,
+        "balanced_accuracy": 0.6380019110936944,
+        "roc_auc": 0.7561114655654629,
+        "pr_auc": 0.581945152786635,
+        "true_negative": 22804,
+        "false_positive": 4047,
+        "false_negative": 7538,
+        "true_positive": 5611,
+        "false_positive_rate": 0.1507206435514506,
+        "false_negative_rate": 0.5732755342611605,
+        "inference_total_seconds": 0.7341101999918465,
+        "inference_per_sample_ms": 0.01835275499979616,
+        "predictions_per_second": 54487.732223914434,
+        "model_size_bytes": 3680,
+        "model_size_kb": 3.59375,
+        "input_dtype": "<class 'numpy.int8'>",
+        "output_dtype": "<class 'numpy.int8'>",
+        "input_shape": [
+            1,
+            9
+        ],
+        "output_shape": [
+            1,
+            1
+        ],
+        "input_quantization_scale": 0.3344479501247406,
+        "input_quantization_zero_point": -2,
+        "output_quantization_scale": 0.00390625,
+        "output_quantization_zero_point": -128
+    },
+    "quantization": {
+        "size_reduction_percent": -2.2222222222222143,
+        "f1_change": 0.046212983481191905,
+        "recall_change": 0.10563540953684686
+    },
+    "deployment_note": "INT8 TFLite is the intended TinyML deployment candidate because integer quantization can reduce model storage and support constrained inference. Actual hardware validation should be performed on the intended edge/space-class processor."
+}

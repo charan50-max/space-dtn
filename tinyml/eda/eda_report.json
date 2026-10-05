@@ -1,0 +1,112 @@
+{
+  "total_samples": 200000,
+  "training_samples": 160000,
+  "testing_samples": 40000,
+  "features": [
+    "value",
+    "sampling",
+    "channel_id",
+    "z_score",
+    "abs_z_score",
+    "delta_value",
+    "abs_delta",
+    "rolling_mean_5",
+    "rolling_std_5"
+  ],
+  "target": "priority",
+  "duplicate_rows": 0,
+  "missing_cells": 0,
+  "class_distribution": [
+    {
+      "class": 0,
+      "count": 134015,
+      "percentage": 67.0075,
+      "label": "Normal / low urgency"
+    },
+    {
+      "class": 1,
+      "count": 65985,
+      "percentage": 32.9925,
+      "label": "Anomalous / high urgency"
+    }
+  ],
+  "train_positive_rate": 0.330225,
+  "test_positive_rate": 0.328725,
+  "train_test_positive_rate_difference_pp": 0.15000000000000013,
+  "top_features_by_abs_target_correlation": [
+    {
+      "feature": "sampling",
+      "abs_pearson_target_corr": 0.2102252541579311
+    },
+    {
+      "feature": "rolling_mean_5",
+      "abs_pearson_target_corr": 0.1963198225895713
+    },
+    {
+      "feature": "value",
+      "abs_pearson_target_corr": 0.19547875056894579
+    },
+    {
+      "feature": "channel_id",
+      "abs_pearson_target_corr": 0.19540880961155316
+    },
+    {
+      "feature": "rolling_std_5",
+      "abs_pearson_target_corr": 0.1319136917073219
+    },
+    {
+      "feature": "abs_delta",
+      "abs_pearson_target_corr": 0.10913768900413033
+    },
+    {
+      "feature": "abs_z_score",
+      "abs_pearson_target_corr": 0.09755029484949736
+    },
+    {
+      "feature": "z_score",
+      "abs_pearson_target_corr": 0.043259319221686
+    },
+    {
+      "feature": "delta_value",
+      "abs_pearson_target_corr": 0.0007121947507668344
+    }
+  ],
+  "top_features_by_mutual_information": [
+    {
+      "feature": "rolling_std_5",
+      "mutual_information": 0.13755290661962882
+    },
+    {
+      "feature": "rolling_mean_5",
+      "mutual_information": 0.12447802869007307
+    },
+    {
+      "feature": "channel_id",
+      "mutual_information": 0.072239674207764
+    },
+    {
+      "feature": "value",
+      "mutual_information": 0.06266618041907823
+    },
+    {
+      "feature": "delta_value",
+      "mutual_information": 0.06177851117683919
+    },
+    {
+      "feature": "abs_delta",
+      "mutual_information": 0.06115206894882985
+    },
+    {
+      "feature": "sampling",
+      "mutual_information": 0.03704323429183831
+    },
+    {
+      "feature": "z_score",
+      "mutual_information": 0.029331669127856896
+    },
+    {
+      "feature": "abs_z_score",
+      "mutual_information": 0.02369059780230298
+    }
+  ]
+}

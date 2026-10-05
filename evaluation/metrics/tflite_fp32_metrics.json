@@ -1,0 +1,36 @@
+{
+    "model": "TensorFlow Lite FP32",
+    "accuracy": 0.7376,
+    "precision": 0.7290623381108616,
+    "recall": 0.3210890562019926,
+    "f1": 0.44582893347412883,
+    "macro_f1": 0.6369662191117779,
+    "balanced_accuracy": 0.6313277391545884,
+    "roc_auc": 0.7803360094700618,
+    "pr_auc": 0.625204398513945,
+    "true_negative": 25282,
+    "false_positive": 1569,
+    "false_negative": 8927,
+    "true_positive": 4222,
+    "false_positive_rate": 0.05843357789281591,
+    "false_negative_rate": 0.6789109437980074,
+    "inference_total_seconds": 0.28543779999017715,
+    "inference_per_sample_ms": 0.0071359449997544285,
+    "predictions_per_second": 140135.6092338735,
+    "model_size_bytes": 3600,
+    "model_size_kb": 3.515625,
+    "input_dtype": "<class 'numpy.float32'>",
+    "output_dtype": "<class 'numpy.float32'>",
+    "input_shape": [
+        1,
+        9
+    ],
+    "output_shape": [
+        1,
+        1
+    ],
+    "input_quantization_scale": 0.0,
+    "input_quantization_zero_point": 0,
+    "output_quantization_scale": 0.0,
+    "output_quantization_zero_point": 0
+}

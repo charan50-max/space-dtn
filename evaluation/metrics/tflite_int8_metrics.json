@@ -1,0 +1,36 @@
+{
+    "model": "TensorFlow Lite INT8",
+    "accuracy": 0.710375,
+    "precision": 0.5809691447504659,
+    "recall": 0.42672446573883943,
+    "f1": 0.49204191695532074,
+    "macro_f1": 0.6447410815696472,
+    "balanced_accuracy": 0.6380019110936944,
+    "roc_auc": 0.7561114655654629,
+    "pr_auc": 0.581945152786635,
+    "true_negative": 22804,
+    "false_positive": 4047,
+    "false_negative": 7538,
+    "true_positive": 5611,
+    "false_positive_rate": 0.1507206435514506,
+    "false_negative_rate": 0.5732755342611605,
+    "inference_total_seconds": 0.7341101999918465,
+    "inference_per_sample_ms": 0.01835275499979616,
+    "predictions_per_second": 54487.732223914434,
+    "model_size_bytes": 3680,
+    "model_size_kb": 3.59375,
+    "input_dtype": "<class 'numpy.int8'>",
+    "output_dtype": "<class 'numpy.int8'>",
+    "input_shape": [
+        1,
+        9
+    ],
+    "output_shape": [
+        1,
+        1
+    ],
+    "input_quantization_scale": 0.3344479501247406,
+    "input_quantization_zero_point": -2,
+    "output_quantization_scale": 0.00390625,
+    "output_quantization_zero_point": -128
+}

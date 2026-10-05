@@ -1,0 +1,133 @@
+.dup-card {
+  margin: 0;
+}
+
+.dup-counter {
+  text-align: right;
+}
+
+.dup-counter strong {
+  display: block;
+  font-size: 30px;
+  line-height: 1;
+  color: var(--orange);
+}
+
+.dup-counter span {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dup-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.dup-controls label {
+  flex: 1 1 320px;
+}
+
+.dup-controls label span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.dup-controls select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #000;
+  color: var(--text);
+}
+
+.dup-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.dup-steps div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  font-size: 13px;
+  color: var(--text-soft);
+}
+
+.dup-steps b {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--cyan);
+  color: #021017;
+  font-size: 12px;
+}
+
+.dup-steps i {
+  align-self: center;
+  font-style: normal;
+  color: var(--muted);
+}
+
+.dup-result {
+  margin-top: 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.dup-result.ok {
+  border: 1px solid rgba(255, 157, 61, 0.45);
+  background: rgba(255, 157, 61, 0.08);
+  color: var(--orange);
+}
+
+.dup-result.bad {
+  border: 1px solid rgba(255, 77, 95, 0.4);
+  background: rgba(255, 77, 95, 0.08);
+  color: var(--red-bright);
+}
+
+.dup-log {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+.dup-log li {
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+
+.dup-log span {
+  margin-right: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+}
+
+.dup-empty {
+  padding: 14px 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}

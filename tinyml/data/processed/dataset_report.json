@@ -1,0 +1,32 @@
+{
+  "source_rows": 303493,
+  "source_channels": 9,
+  "source_segments": 2123,
+  "source_anomaly_rate": 0.33036676298959117,
+  "generated_rows": 200000,
+  "train_rows": 160000,
+  "test_rows": 40000,
+  "train_anomaly_rate": 0.330225,
+  "test_anomaly_rate": 0.328725,
+  "train_segments": 1698,
+  "test_segments": 425,
+  "train_test_segment_overlap": 0,
+  "features": [
+    "value",
+    "sampling",
+    "channel_id",
+    "z_score",
+    "abs_z_score",
+    "delta_value",
+    "abs_delta",
+    "rolling_mean_5",
+    "rolling_std_5"
+  ],
+  "target": "priority",
+  "target_definition": {
+    "0": "normal / low urgency",
+    "1": "anomalous / high urgency"
+  },
+  "random_seed": 42,
+  "synthetic_method": "empirical resampling with small channel-aware Gaussian perturbation"
+}
