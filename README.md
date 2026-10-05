@@ -2302,34 +2302,5 @@ Python
 Machine Learning
 ```
 
-------------------------------------------------------------------------
 
-## Authors / Project Team
-
-Add the final project team, institution, guide, academic year, and
-repository URL here before submission.
-
-Recommended format:
-
-``` text
-Project:
-Space DTN — Disruption-Tolerant Space Data Routing & Priority Engine
-
-Team:
-[Team Members]
-
-Department:
-[Department]
-
-Institution:
-[Institution]
-
-Guide:
-[Guide Name]
-
-Academic Year:
-2026–27
-
-Repository:
-[GitHub Repository URL]
 ```
