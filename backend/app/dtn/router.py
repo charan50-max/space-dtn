@@ -53,7 +53,7 @@ class DTNRouter:
         congestion_cost = (
             link.latency
             * (congestion_ratio ** 2)
-            * 8.0
+            * 14.0
             * congestion_weight
         )
 
@@ -104,6 +104,49 @@ class DTNRouter:
                         neighbor,
                         path + [neighbor],
                     ),
+                )
+
+        return None
+
+    def find_nominal_route(
+        self,
+        source: str,
+        destination: str,
+    ) -> Optional[List[str]]:
+        """
+        Shortest path on the published topology: base latency only,
+        ignoring live congestion and treating failed links as still present.
+        Used to detect when a live decision left the healthy path.
+        """
+        if source == destination:
+            return [source]
+
+        queue: List[Tuple[float, str, List[str]]] = [
+            (0.0, source, [source])
+        ]
+        visited = set()
+
+        while queue:
+            cost, current, path = heapq.heappop(queue)
+
+            if current in visited:
+                continue
+
+            visited.add(current)
+
+            if current == destination:
+                return path
+
+            for neighbor, link in self.network.get_neighbors(
+                current, include_inactive=True
+            ):
+                if neighbor in visited:
+                    continue
+
+                latency = link.base_latency if link.base_latency else link.latency
+                heapq.heappush(
+                    queue,
+                    (cost + latency, neighbor, path + [neighbor]),
                 )
 
         return None
@@ -197,3 +240,10 @@ class StaticPlanRouter:
         }
 
         return route if route[1] in usable_neighbors else None
+
+    def find_nominal_route(
+        self,
+        source: str,
+        destination: str,
+    ) -> Optional[List[str]]:
+        return self.plan.get((source, destination))

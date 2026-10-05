@@ -24,13 +24,15 @@ const SPEEDS = { slow: 4500, normal: 2800, fast: 1400 };
 const DEFAULT_SPEED = "normal";
 
 const isDone = (message) =>
-  message.status === "delivered" || message.status === "dropped";
+  message.status === "delivered" ||
+  message.status === "dropped" ||
+  message.status === "rejected";
 
 function summarize(snapshot) {
   const list = snapshot?.messages || [];
   return {
     hasPackets: list.length > 0,
-    complete: list.length > 0 && list.every(isDone),
+    complete: Boolean(snapshot?.finished) || (list.length > 0 && list.every(isDone)),
   };
 }
 

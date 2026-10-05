@@ -30,6 +30,18 @@ DUPLICATE_DELAY = 4      # ticks between the original and its copy
 CORRUPT_OFFSET = 10      # first corrupted packet (0-based index)
 CORRUPT_STRIDE = 17      # then every 17th packet after that
 
+# Extra bundles injected on top of the generated TinyML cycle so the
+# live simulator has denser traffic across the expanded mesh.
+EXTRA_FLOW = [
+    ("GS-1", "GS-2"),
+    ("GS-1", "SAT-5"),
+    ("GS-1", "SAT-7"),
+    ("GS-2", "GS-1"),
+    ("GS-1", "SAT-4"),
+    ("SAT-6", "GS-2"),
+]
+EXTRA_COUNT = 24
+
 FEATURES = [
     "value",
     "sampling",
@@ -119,6 +131,31 @@ class TrafficService:
             )
 
             created.append(message)
+
+        for index in range(EXTRA_COUNT):
+            template = data.get("packets", [])[index % max(1, len(data.get("packets", [])))]
+            source, destination = EXTRA_FLOW[index % len(EXTRA_FLOW)]
+            telemetry = {
+                feature: template.get(feature)
+                for feature in FEATURES
+                if template.get(feature) is not None
+            }
+            prediction = priority_service.predict(telemetry)
+            extra = simulator.add_message(
+                source=source,
+                destination=destination,
+                payload=template.get("payload", f"extra-{index + 1}"),
+                priority_score=prediction["priority_score"],
+                priority_class=prediction["priority_class"],
+                priority_probability=prediction.get("priority_probability"),
+                priority_confidence=prediction.get("confidence"),
+                priority_threshold=prediction.get("threshold"),
+                priority_model=prediction.get("model_type"),
+                ttl=int(template.get("ttl", 40)),
+                message_id=f"MSG-X{index + 1:03d}",
+                telemetry=telemetry,
+            )
+            created.append(extra)
 
         duplicated = created[DUPLICATE_OFFSET::DUPLICATE_STRIDE]
 

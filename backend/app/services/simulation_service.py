@@ -178,8 +178,12 @@ class ComparisonService:
         ("LOW", 5),
         ("LOW", 5),
         ("LOW", 5),
-        ("LOW", 5),
-        ("LOW", 5),
+        ("LOW", 8),
+        ("LOW", 8),
+        ("LOW", 12),
+        ("LOW", 12),
+        ("LOW", 18),
+        ("HIGH", 80),
         ("HIGH", 95),
     ]
 
@@ -201,7 +205,7 @@ class ComparisonService:
     CONGEST_CLEAR_TICK = 8
     CONGEST_LEVEL = 70.0
 
-    MAX_TICKS = 40
+    MAX_TICKS = 60
 
     MODES = ("baseline", "reroute", "adaptive")
 
@@ -231,7 +235,7 @@ class ComparisonService:
                     "telemetry",
                     priority_score=score,
                     priority_class=priority_class,
-                    ttl=30,
+                    ttl=40,
                 )
 
         # Messages are numbered in creation order, so the urgent one is last.

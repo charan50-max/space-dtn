@@ -19,9 +19,12 @@ import "./dtn-callouts.css";
  * - Each satellite has one fixed orbital plane and moves slowly around it.
  * - The actual satellite.glb is the visible node. No artificial sphere/ring
  *   is drawn around the satellite.
- * - Satellite-to-satellite links are straight dynamic beams.
- * - Satellite-to-ground links are dynamic elevated arcs so the beam remains
- *   visible instead of disappearing through the Earth.
+ * - Every link is re-routed each frame so it never passes through the Earth:
+ *   satellite-to-satellite beams stay straight while the line of sight is
+ *   clear and bend around the planet only as much as needed when it is not.
+ * - Satellite-to-ground links are elevated arcs, lifted further when the
+ *   satellite is on the far side of the planet.
+ * - Packet markers travel along exactly the same curved path as the beams.
  * - Ground stations are separated geographically so they are visually distinct.
  */
 
@@ -491,127 +494,248 @@ function GroundStation({
   );
 }
 
-function positionCylinder(
-  ref,
-  start,
-  end
-) {
-  if (!ref.current) {
-    return;
+/* ==========================================================================
+ * DYNAMIC EARTH-AVOIDING LINK ROUTING
+ *
+ * Every frame the satellites have moved, so every link is re-evaluated:
+ *
+ *  - Satellite <-> satellite: if the straight beam stays outside the
+ *    clearance sphere it is drawn straight. If it would dip inside, the beam
+ *    becomes a quadratic arc pushed away from the Earth by the SMALLEST amount
+ *    that clears it (found by bisection), so the beam bends in gradually,
+ *    follows the orbit, and straightens out again when the geometry allows.
+ *
+ *  - Ground <-> satellite (or ground <-> ground): always an elevated cubic arc
+ *    that leaves the antenna radially outward. If the satellite is on the far
+ *    side of the planet, the arc is lifted just enough to clear the Earth.
+ *
+ *  - One curve is computed per link per frame and cached, so the beam AND the
+ *    travelling packet markers use exactly the same path.
+ * ========================================================================== */
+
+// Beams must stay at least this far from the Earth's centre
+// (a little above the surface so they never graze the globe).
+const LINK_CLEARANCE = EARTH_RADIUS * 1.12;
+
+// Number of straight pieces used to draw each curved beam.
+const LINK_SEGMENTS = 28;
+
+const isGroundId = (id) => typeof id === "string" && id.startsWith("GS-");
+
+// Scratch objects (avoid per-frame allocations in the hot loops).
+const _sample = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+const _mid = new THREE.Vector3();
+const _scale = new THREE.Vector3();
+const _quat = new THREE.Quaternion();
+const _mat = new THREE.Matrix4();
+
+const COLOR_CORE_ACTIVE = new THREE.Color("#b8f9ff");
+const COLOR_GLOW_ACTIVE = new THREE.Color("#00e5ff");
+const COLOR_DOWN = new THREE.Color("#ff304f");
+
+/* Smallest distance from the Earth's centre along part of a curve. */
+function minCurveRadius(curve, t0 = 0, t1 = 1, samples = 24) {
+  let min = Infinity;
+
+  for (let i = 0; i <= samples; i += 1) {
+    curve.getPoint(t0 + (t1 - t0) * (i / samples), _sample);
+    const radius = _sample.length();
+    if (radius < min) min = radius;
   }
 
-  const direction =
-    new THREE.Vector3().subVectors(
-      end,
-      start
-    );
-
-  const distance =
-    direction.length();
-
-  if (distance <= 0.001) {
-    return;
-  }
-
-  direction.normalize();
-
-  ref.current.position
-    .copy(start)
-    .add(end)
-    .multiplyScalar(0.5);
-
-  ref.current.quaternion.setFromUnitVectors(
-    UP,
-    direction
-  );
-
-  ref.current.scale.set(
-    1,
-    distance,
-    1
-  );
-}
-
-function quadraticPoint(
-  a,
-  control,
-  b,
-  t
-) {
-  const oneMinus = 1 - t;
-
-  return new THREE.Vector3(
-    oneMinus * oneMinus * a.x +
-      2 *
-        oneMinus *
-        t *
-        control.x +
-      t * t * b.x,
-
-    oneMinus * oneMinus * a.y +
-      2 *
-        oneMinus *
-        t *
-        control.y +
-      t * t * b.y,
-
-    oneMinus * oneMinus * a.z +
-      2 *
-        oneMinus *
-        t *
-        control.z +
-      t * t * b.z
-  );
+  return min;
 }
 
 /*
- * Ground links use a raised quadratic arc.
- * Satellite-to-satellite links stay straight.
+ * Finds the smallest value in [0, maxValue] for which isOk() is true.
+ * Used so a link is only bent as much as it really has to be, which keeps
+ * the motion smooth and continuous while the satellites orbit.
  */
-function getGroundLinkControl(
-  start,
-  end
-) {
-  const midpoint =
-    start
-      .clone()
-      .add(end)
-      .multiplyScalar(0.5);
+function solveMinimum(maxValue, isOk) {
+  if (isOk(0)) return 0;
+  if (!isOk(maxValue)) return maxValue;
 
-  const distance =
-    start.distanceTo(end);
+  let lo = 0;
+  let hi = maxValue;
 
-  const lift =
-    THREE.MathUtils.clamp(
-      1.05 +
-        distance * 0.10,
-      1.15,
-      1.85
-    );
-
-  const control =
-    midpoint.normalize().multiplyScalar(
-      EARTH_RADIUS + lift
-    );
-
-  return control;
-}
-
-function getLinkPoint(source, target, time, progress) {
-  const start = getNodePosition(source, time);
-  const end = getNodePosition(target, time);
-
-  if (!start || !end) return null;
-
-  const isGroundLink =
-    source.startsWith("GS-") || target.startsWith("GS-");
-
-  if (isGroundLink) {
-    const control = getGroundLinkControl(start, end);
-    return quadraticPoint(start, control, end, progress);
+  for (let i = 0; i < 14; i += 1) {
+    const mid = (lo + hi) / 2;
+    if (isOk(mid)) hi = mid;
+    else lo = mid;
   }
 
-  return start.clone().lerp(end, progress);
+  return hi * 1.03; // tiny safety margin
+}
+
+function buildSatelliteCurve(a, b) {
+  const d = new THREE.Vector3().subVectors(b, a);
+  const lengthSq = d.lengthSq() || 1e-9;
+
+  // Closest point of the segment a->b to the Earth's centre.
+  const t = THREE.MathUtils.clamp(-a.dot(d) / lengthSq, 0, 1);
+  const closest = a.clone().addScaledVector(d, t);
+  const distance = closest.length();
+
+  // Line of sight is clear: keep the beam perfectly straight.
+  if (distance >= LINK_CLEARANCE) {
+    return new THREE.LineCurve3(a.clone(), b.clone());
+  }
+
+  // Push the beam away from the Earth, in the direction of the closest point.
+  const push = new THREE.Vector3();
+
+  if (distance > 1e-3) {
+    push.copy(closest).divideScalar(distance);
+  } else {
+    // Beam passes (almost) exactly through the centre: pick a stable side.
+    push.crossVectors(d, UP);
+    if (push.lengthSq() < 1e-6) push.crossVectors(d, X_AXIS);
+    push.normalize();
+  }
+
+  const midpoint = a.clone().add(b).multiplyScalar(0.5);
+
+  const make = (amount) =>
+    new THREE.QuadraticBezierCurve3(
+      a.clone(),
+      midpoint.clone().addScaledVector(push, amount),
+      b.clone()
+    );
+
+  const amount = solveMinimum(14, (value) =>
+    minCurveRadius(make(value)) >= LINK_CLEARANCE
+  );
+
+  return make(amount);
+}
+
+/*
+ * `a` is always the ground station. `bIsGround` is true for ground<->ground.
+ */
+function buildGroundCurve(a, b, bIsGround) {
+  const distance = a.distanceTo(b);
+  const lift = THREE.MathUtils.clamp(1.0 + distance * 0.04, 1.0, 1.5);
+
+  const outwardA = a.clone().normalize();
+  const p1 = a.clone().addScaledVector(outwardA, lift);
+
+  const p2 = bIsGround
+    ? b.clone().addScaledVector(b.clone().normalize(), lift)
+    : b.clone().addScaledVector(a.clone().sub(b), 0.3);
+
+  // Direction used to raise the whole arc when the far side is the Earth.
+  const apex = a.clone().add(b).multiplyScalar(0.5);
+
+  if (apex.length() > 0.4) {
+    apex.normalize();
+  } else {
+    apex.crossVectors(b.clone().sub(a), UP);
+    if (apex.lengthSq() < 1e-6) apex.crossVectors(b.clone().sub(a), X_AXIS);
+    apex.normalize();
+  }
+
+  const make = (raise) =>
+    new THREE.CubicBezierCurve3(
+      a.clone(),
+      p1.clone().addScaledVector(apex, raise),
+      p2.clone().addScaledVector(apex, raise),
+      b.clone()
+    );
+
+  // The ends sit on / near the surface, so only the interior is checked.
+  const t0 = 0.14;
+  const t1 = bIsGround ? 0.86 : 0.98;
+
+  const raise = solveMinimum(12, (value) =>
+    minCurveRadius(make(value), t0, t1) >= LINK_CLEARANCE
+  );
+
+  return make(raise);
+}
+
+/*
+ * One curve per link per frame. The cache is keyed by the unordered node pair
+ * and by the scene clock, so every beam and every packet marker that asks for
+ * the same link in the same frame receives the identical path.
+ */
+const linkCurveCache = new Map();
+
+function getLinkCurve(source, target, time) {
+  if (!source || !target) return null;
+
+  const key =
+    source < target ? `${source}|${target}` : `${target}|${source}`;
+
+  const cached = linkCurveCache.get(key);
+  if (cached && cached.time === time) return cached;
+
+  // Canonical orientation: ground station first, otherwise alphabetical.
+  let from = source;
+  let to = target;
+
+  if (
+    (isGroundId(to) && !isGroundId(from)) ||
+    (isGroundId(from) === isGroundId(to) && from > to)
+  ) {
+    [from, to] = [to, from];
+  }
+
+  const a = getNodePosition(from, time);
+  const b = getNodePosition(to, time);
+
+  if (!a || !b) return null;
+
+  const curve =
+    isGroundId(from) || isGroundId(to)
+      ? buildGroundCurve(a, b, isGroundId(to))
+      : buildSatelliteCurve(a, b);
+
+  const entry = { time, from, to, curve };
+  linkCurveCache.set(key, entry);
+
+  return entry;
+}
+
+/* Point along the (Earth-avoiding) link, travelling source -> target. */
+function getLinkPoint(source, target, time, progress) {
+  const entry = getLinkCurve(source, target, time);
+
+  if (!entry) return null;
+
+  const t = entry.from === source ? progress : 1 - progress;
+
+  return entry.curve.getPoint(THREE.MathUtils.clamp(t, 0, 1));
+}
+
+/* Writes the beam's segments into an InstancedMesh of unit cylinders. */
+function writeBeamMatrices(mesh, points) {
+  if (!mesh) return;
+
+  for (let i = 0; i < LINK_SEGMENTS; i += 1) {
+    const p0 = points[i];
+    const p1 = points[i + 1];
+
+    _dir.subVectors(p1, p0);
+    const length = _dir.length();
+
+    if (length < 1e-6) {
+      _mid.copy(p0);
+      _quat.identity();
+      _scale.set(0, 0, 0);
+    } else {
+      _dir.divideScalar(length);
+      _quat.setFromUnitVectors(UP, _dir);
+      _mid.addVectors(p0, p1).multiplyScalar(0.5);
+      _scale.set(1, length + 0.002, 1);
+    }
+
+    _mat.compose(_mid, _quat, _scale);
+    mesh.setMatrixAt(i, _mat);
+  }
+
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.visible = true;
 }
 
 function CommunicationLink({
@@ -620,199 +744,90 @@ function CommunicationLink({
   status,
   highlighted,
 }) {
-  const coreA = useRef();
-  const coreB = useRef();
+  const glowRef = useRef();
+  const coreRef = useRef();
 
-  const glowA = useRef();
-  const glowB = useRef();
+  const points = useMemo(
+    () =>
+      Array.from(
+        { length: LINK_SEGMENTS + 1 },
+        () => new THREE.Vector3()
+      ),
+    []
+  );
 
-  const isActive =
-    ![
-      "disrupted",
-      "down",
-      "inactive",
-    ].includes(status);
-
-  const isGroundLink =
-    source.startsWith("GS-") ||
-    target.startsWith("GS-");
+  const isActive = !["disrupted", "down", "inactive"].includes(status);
 
   useFrame((state) => {
-    const time =
-      state.clock.elapsedTime;
+    const entry = getLinkCurve(
+      source,
+      target,
+      state.clock.elapsedTime
+    );
 
-    const start =
-      getNodePosition(
-        source,
-        time
-      );
+    if (!entry) return;
 
-    const end =
-      getNodePosition(
-        target,
-        time
-      );
-
-    if (!start || !end) {
-      return;
+    for (let i = 0; i <= LINK_SEGMENTS; i += 1) {
+      entry.curve.getPoint(i / LINK_SEGMENTS, points[i]);
     }
 
-    let control = null;
+    writeBeamMatrices(glowRef.current, points);
+    writeBeamMatrices(coreRef.current, points);
 
-    if (isGroundLink) {
-      control =
-        getGroundLinkControl(
-          start,
-          end
-        );
-    }
-
-    const midpoint =
-      control
-        ? quadraticPoint(
-            start,
-            control,
-            end,
-            0.5
-          )
-        : start
-            .clone()
-            .lerp(end, 0.5);
-
-    positionCylinder(
-      coreA,
-      start,
-      midpoint
-    );
-
-    positionCylinder(
-      coreB,
-      midpoint,
-      end
-    );
-
-    positionCylinder(
-      glowA,
-      start,
-      midpoint
-    );
-
-    positionCylinder(
-      glowB,
-      midpoint,
-      end
-    );
-
-    const coreColor =
-      isActive
-        ? "#b8f9ff"
-        : "#ff304f";
-
-    const glowColor =
-      isActive
-        ? "#00e5ff"
-        : "#ff304f";
-
-    const coreOpacity =
-      highlighted
+    if (coreRef.current) {
+      coreRef.current.material.color.copy(
+        isActive ? COLOR_CORE_ACTIVE : COLOR_DOWN
+      );
+      coreRef.current.material.opacity = highlighted
         ? 1
         : isActive
         ? 0.82
         : 0.92;
+    }
 
-    const glowOpacity =
-      highlighted
+    if (glowRef.current) {
+      glowRef.current.material.color.copy(
+        isActive ? COLOR_GLOW_ACTIVE : COLOR_DOWN
+      );
+      glowRef.current.material.opacity = highlighted
         ? 0.32
         : isActive
         ? 0.13
         : 0.10;
-
-    [
-      coreA,
-      coreB,
-    ].forEach((ref) => {
-      if (!ref.current) {
-        return;
-      }
-
-      ref.current.material.color.set(
-        coreColor
-      );
-
-      ref.current.material.opacity =
-        coreOpacity;
-    });
-
-    [
-      glowA,
-      glowB,
-    ].forEach((ref) => {
-      if (!ref.current) {
-        return;
-      }
-
-      ref.current.material.color.set(
-        glowColor
-      );
-
-      ref.current.material.opacity =
-        glowOpacity;
-    });
-
+    }
   });
 
   return (
     <group>
-      {[glowA, glowB].map(
-        (ref, index) => (
-          <mesh
-            key={`glow-${index}`}
-            ref={ref}
-          >
-            <cylinderGeometry
-              args={[
-                0.065,
-                0.065,
-                1,
-                10,
-              ]}
-            />
+      <instancedMesh
+        ref={glowRef}
+        args={[undefined, undefined, LINK_SEGMENTS]}
+        frustumCulled={false}
+        visible={false}
+      >
+        <cylinderGeometry args={[0.065, 0.065, 1, 10, 1, true]} />
+        <meshBasicMaterial
+          color="#00e5ff"
+          transparent
+          opacity={0.1}
+          depthWrite={false}
+        />
+      </instancedMesh>
 
-            <meshBasicMaterial
-              color="#00e5ff"
-              transparent
-              opacity={0.10}
-              depthWrite={false}
-            />
-          </mesh>
-        )
-      )}
-
-      {[coreA, coreB].map(
-        (ref, index) => (
-          <mesh
-            key={`core-${index}`}
-            ref={ref}
-          >
-            <cylinderGeometry
-              args={[
-                0.018,
-                0.018,
-                1,
-                8,
-              ]}
-            />
-
-            <meshBasicMaterial
-              color="#b8f9ff"
-              transparent
-              opacity={0.8}
-              depthWrite={false}
-            />
-          </mesh>
-        )
-      )}
-
+      <instancedMesh
+        ref={coreRef}
+        args={[undefined, undefined, LINK_SEGMENTS]}
+        frustumCulled={false}
+        visible={false}
+      >
+        <cylinderGeometry args={[0.018, 0.018, 1, 8, 1, true]} />
+        <meshBasicMaterial
+          color="#b8f9ff"
+          transparent
+          opacity={0.8}
+          depthWrite={false}
+        />
+      </instancedMesh>
     </group>
   );
 }

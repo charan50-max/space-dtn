@@ -227,10 +227,12 @@ function LiveTraffic({ state, traffic, navigate }) {
       waiting: 0,
       delivered: 0,
       dropped: 0,
+      rejected: 0,
       copies: copies.length,
     };
     packets.forEach((packet) => {
-      result[groupOf(packet)] += 1;
+      const group = groupOf(packet);
+      if (group in result) result[group] += 1;
     });
     return result;
   }, [packets, copies, total]);
@@ -283,7 +285,7 @@ function LiveTraffic({ state, traffic, navigate }) {
     );
   }, [packets, copies, activeFilter, onlyHigh]);
 
-  const finished = counts.delivered + counts.dropped;
+  const finished = counts.delivered + counts.dropped + counts.rejected;
   const progress = total ? Math.round((finished / total) * 100) : 0;
   const hasPackets = traffic.hasPackets;
 

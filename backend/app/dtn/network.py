@@ -116,39 +116,39 @@ class SpaceNetwork:
         self.nodes = {
             "GS-1": Node(
                 id="GS-1", name="Ground Station Alpha", node_type="ground",
-                x=8, y=78, buffer_capacity=100, buffer_cost=5.0,
+                x=8, y=78, buffer_capacity=40, buffer_cost=5.0,
             ),
             "SAT-1": Node(
                 id="SAT-1", name="Satellite 1", node_type="satellite",
-                x=22, y=52, buffer_capacity=100, buffer_cost=10.0,
+                x=22, y=52, buffer_capacity=6, buffer_cost=10.0,
             ),
             "SAT-2": Node(
                 id="SAT-2", name="Satellite 2", node_type="satellite",
-                x=40, y=28, buffer_capacity=100, buffer_cost=14.0,
+                x=40, y=28, buffer_capacity=5, buffer_cost=14.0,
             ),
             "SAT-3": Node(
                 id="SAT-3", name="Satellite 3", node_type="satellite",
-                x=58, y=52, buffer_capacity=100, buffer_cost=12.0,
+                x=58, y=52, buffer_capacity=6, buffer_cost=12.0,
             ),
             "SAT-4": Node(
                 id="SAT-4", name="Satellite 4", node_type="satellite",
-                x=40, y=72, buffer_capacity=100, buffer_cost=22.0,
+                x=40, y=72, buffer_capacity=4, buffer_cost=22.0,
             ),
             "SAT-5": Node(
                 id="SAT-5", name="Satellite 5", node_type="satellite",
-                x=76, y=28, buffer_capacity=100, buffer_cost=16.0,
+                x=76, y=28, buffer_capacity=6, buffer_cost=16.0,
             ),
             "SAT-6": Node(
                 id="SAT-6", name="Satellite 6", node_type="satellite",
-                x=22, y=28, buffer_capacity=100, buffer_cost=15.0,
+                x=22, y=28, buffer_capacity=5, buffer_cost=15.0,
             ),
             "SAT-7": Node(
                 id="SAT-7", name="Satellite 7", node_type="satellite",
-                x=76, y=72, buffer_capacity=100, buffer_cost=15.0,
+                x=76, y=72, buffer_capacity=5, buffer_cost=15.0,
             ),
             "GS-2": Node(
                 id="GS-2", name="Ground Station Beta", node_type="ground",
-                x=92, y=72, buffer_capacity=100, buffer_cost=5.0,
+                x=92, y=72, buffer_capacity=40, buffer_cost=5.0,
             ),
         }
 
@@ -171,12 +171,16 @@ class SpaceNetwork:
             "L16": Link("L16", "SAT-6", "SAT-4", 2, 65),
         }
 
-    def get_neighbors(self, node_id: str) -> List[tuple]:
+    def get_neighbors(
+        self,
+        node_id: str,
+        include_inactive: bool = False,
+    ) -> List[tuple]:
         neighbors = []
 
         for link in self.links.values():
             # Latency at MAX_LATENCY is the simulation's disruption state.
-            if not link.active:
+            if not include_inactive and not link.active:
                 continue
 
             if link.source == node_id:

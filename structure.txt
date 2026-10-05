@@ -1,12 +1,13 @@
 backend
 evaluation
 frontend
-space_dtn_adaptive_routing_demo
 space_dtn_traffic_generator
 tinyml
+.gitignore
+claude project analysis.docx
 README.md
+README_CHANGES V2.md
 README_UPDATES.md
-space_dtn_adaptive_routing_demo.zip
 structure.txt
 backend\app
 backend\.env
@@ -27,12 +28,14 @@ backend\app\api\__init__.py
 backend\app\core\config.py
 backend\app\core\state.py
 backend\app\core\__init__.py
+backend\app\dtn\disruptions.py
 backend\app\dtn\message.py
 backend\app\dtn\network.py
 backend\app\dtn\node.py
 backend\app\dtn\router.py
 backend\app\dtn\simulator.py
 backend\app\dtn\__init__.py
+backend\app\services\benchmark_service.py
 backend\app\services\priority_service.py
 backend\app\services\simulation_service.py
 backend\app\services\traffic_service.py
@@ -135,20 +138,6 @@ frontend\src\pages\Simulation.jsx
 frontend\src\pages\TinyML.jsx
 frontend\src\pages\traffic.css
 frontend\src\services\api.js
-space_dtn_adaptive_routing_demo\src
-space_dtn_adaptive_routing_demo\ADAPTIVE_ROUTING_DEMO_README.md
-space_dtn_adaptive_routing_demo\LIVE_TRAFFIC_CSS.css
-space_dtn_adaptive_routing_demo\src\components
-space_dtn_adaptive_routing_demo\src\pages
-space_dtn_adaptive_routing_demo\src\services
-space_dtn_adaptive_routing_demo\src\App.jsx
-space_dtn_adaptive_routing_demo\src\index.css
-space_dtn_adaptive_routing_demo\src\components\NetworkGraph.jsx
-space_dtn_adaptive_routing_demo\src\components\Sidebar.jsx
-space_dtn_adaptive_routing_demo\src\components\SpaceScene.jsx
-space_dtn_adaptive_routing_demo\src\pages\LiveTraffic.jsx
-space_dtn_adaptive_routing_demo\src\pages\Simulation.jsx
-space_dtn_adaptive_routing_demo\src\services\api.js
 space_dtn_traffic_generator\README.md
 space_dtn_traffic_generator\traffic_cycle.csv
 space_dtn_traffic_generator\traffic_cycle.json

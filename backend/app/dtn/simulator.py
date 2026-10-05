@@ -187,6 +187,35 @@ class DTNSimulator:
 
         return min(candidates, key=lambda link: link.latency)
 
+    def _slot_capacity(self, link) -> int:
+        """
+        How many messages this link can carry this tick.
+
+        Congestion cuts usable slots. A fully congested link carries nothing,
+        so traffic must detour or wait.
+        """
+        if link is None or not link.active:
+            return 0
+
+        factor = max(0.0, 1.0 - (link.congestion / 100.0))
+        return max(0, int(self.link_capacity * factor))
+
+    def _is_satellite(self, node_id: str) -> bool:
+        node = self.network.nodes.get(node_id)
+        return bool(node and node.node_type == "satellite")
+
+    def _drop_resident(self, victim: DTNMessage, occupancy: Counter, reason: str):
+        victim.reject_reason = reason
+
+        if victim.copy_of:
+            victim.status = "rejected"
+        else:
+            victim.status = "dropped"
+            self.total_dropped += 1
+
+        occupancy[victim.current_node] -= 1
+        self.buffer_evictions += 1
+
     # --------------------------------------------------
     # BUFFER HELPERS
     # --------------------------------------------------
@@ -236,16 +265,7 @@ class DTNSimulator:
         ):
             return False
 
-        victim.reject_reason = "buffer_evicted"
-
-        if victim.copy_of:
-            victim.status = "rejected"
-        else:
-            victim.status = "dropped"
-            self.total_dropped += 1
-
-        occupancy[node_id] -= 1
-        self.buffer_evictions += 1
+        self._drop_resident(victim, occupancy, "buffer_evicted")
 
         self._log(
             f"{victim.id} evicted from full buffer at {node_id} "
@@ -253,6 +273,105 @@ class DTNSimulator:
         )
 
         return True
+
+    def _enforce_storage(
+        self,
+        node_id: str,
+        active_messages: List[DTNMessage],
+        occupancy: Counter,
+    ):
+        """
+        Satellite storage policy: if occupancy exceeds that satellite's
+        buffer, drop the lowest-priority residents until it fits.
+        Ground stations keep a larger origin/sink queue and are not cut.
+        """
+        if not self._is_satellite(node_id):
+            return
+
+        capacity = self._capacity_of(node_id)
+
+        while occupancy[node_id] > capacity:
+            residents = [
+                other
+                for other in active_messages
+                if other.current_node == node_id
+                and other.status not in self.TERMINAL
+            ]
+
+            if not residents:
+                return
+
+            victim = min(
+                residents,
+                key=lambda other: (other.priority_score, -other.created_at),
+            )
+            self._drop_resident(victim, occupancy, "buffer_evicted")
+            self._log(
+                f"{victim.id} dropped at {node_id}: satellite storage "
+                f"full (limit {capacity}), lowest priority evicted"
+            )
+
+    def _nominal_next(self, source: str, destination: str):
+        finder = getattr(self.router, "find_nominal_route", None)
+        if finder is None:
+            return None, None
+
+        path = finder(source, destination)
+        if not path or len(path) < 2:
+            return path, None
+
+        return path, path[1]
+
+    def _explain_reroute(
+        self,
+        message: DTNMessage,
+        previous_node: str,
+        live_next: str,
+        ideal_next: Optional[str],
+    ):
+        if not ideal_next or live_next == ideal_next:
+            return
+
+        avoided = self.network.find_link(previous_node, ideal_next)
+        reason = "congestion"
+        link_id = avoided.id if avoided else "planned hop"
+
+        if avoided is not None and not avoided.active:
+            reason = "failure"
+        elif avoided is not None and avoided.congestion >= 50:
+            reason = "congestion"
+        else:
+            # Later hops on the healthy path may be the problem.
+            nominal, _ = self._nominal_next(previous_node, message.destination)
+            if nominal:
+                for a, b in zip(nominal, nominal[1:]):
+                    hop = self.network.find_link(a, b)
+                    if hop is None:
+                        continue
+                    if not hop.active:
+                        reason = "failure"
+                        link_id = hop.id
+                        break
+                    if hop.congestion >= 50:
+                        reason = "congestion"
+                        link_id = hop.id
+                        break
+
+        message.reroute_reason = reason
+        message.avoided_link = link_id
+        message.last_decision = f"reroute_{reason}"
+        message.reroute_seq = (message.reroute_seq or 0) + 1
+
+        if reason == "failure":
+            self._log(
+                f"REROUTE {message.id}: {previous_node} → {live_next} "
+                f"because {link_id} failed (next-best live path)"
+            )
+        else:
+            self._log(
+                f"REROUTE {message.id}: {previous_node} → {live_next} "
+                f"to avoid congestion on {link_id}"
+            )
 
     # --------------------------------------------------
     # SIMULATION STEP
@@ -320,17 +439,42 @@ class DTNSimulator:
             if not route:
                 message.status = "stored"
                 message.stored_ticks += 1
-                self._log(
-                    f"{message.id} stored at {message.current_node} "
-                    f"(no usable route)"
+                message.last_decision = "stored"
+
+                planned_link = None
+                _, ideal_next = self._nominal_next(
+                    message.current_node, message.destination
+                )
+                if ideal_next:
+                    planned_link = self.network.find_link(
+                        message.current_node, ideal_next
+                    )
+
+                if planned_link is not None and not planned_link.active:
+                    self._log(
+                        f"{message.id} stored at {message.current_node} "
+                        f"({planned_link.id} failed, no usable alternate)"
+                    )
+                else:
+                    self._log(
+                        f"{message.id} stored at {message.current_node} "
+                        f"(no usable route)"
+                    )
+
+                self._enforce_storage(
+                    message.current_node, active_messages, occupancy
                 )
                 continue
 
             if len(route) >= 2:
                 next_node = route[1]
                 previous_node = message.current_node
+                _, ideal_next = self._nominal_next(
+                    previous_node, message.destination
+                )
 
                 # Link capacity: higher-ranked messages claim slots first.
+                # Congestion shrinks the number of usable slots this tick.
                 link = self._link_between(previous_node, next_node)
                 link_key = None
 
@@ -338,14 +482,22 @@ class DTNSimulator:
                     link_key = getattr(
                         link, "id", f"{previous_node}-{next_node}"
                     )
+                    slots = self._slot_capacity(link)
 
-                    if link_usage.get(link_key, 0) >= self.link_capacity:
+                    if link_usage.get(link_key, 0) >= slots:
                         message.status = "queued"
                         message.queued_ticks += 1
-                        self._log(
-                            f"{message.id} waiting at {previous_node} "
-                            f"(link {link_key} full)"
-                        )
+                        if slots == 0 and link.congestion > 0:
+                            self._log(
+                                f"{message.id} waiting at {previous_node} "
+                                f"(link {link_key} congested to "
+                                f"{link.congestion:.0f}%, no slots left)"
+                            )
+                        else:
+                            self._log(
+                                f"{message.id} waiting at {previous_node} "
+                                f"(link {link_key} full)"
+                            )
                         continue
 
                 # Buffer capacity at the next relay. The final destination
@@ -373,15 +525,25 @@ class DTNSimulator:
                 occupancy[previous_node] -= 1
                 occupancy[next_node] += 1
 
+                self._explain_reroute(
+                    message, previous_node, next_node, ideal_next
+                )
+
                 message.current_node = next_node
                 message.route.append(next_node)
                 message.hops += 1
                 message.status = "in_transit"
+                if not message.last_decision or not str(
+                    message.last_decision
+                ).startswith("reroute"):
+                    message.last_decision = "forwarded"
 
                 self._log(
                     f"{message.id} forwarded "
                     f"{previous_node} → {next_node}"
                 )
+
+                self._enforce_storage(next_node, active_messages, occupancy)
 
             if message.current_node == message.destination:
                 self._deliver(message)

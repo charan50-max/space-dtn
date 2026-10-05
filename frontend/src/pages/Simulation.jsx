@@ -24,6 +24,42 @@ const PHASE_TEXT = {
   complete: "Complete",
 };
 
+// The Adaptive Link Controls card spans the full page width below the 3D
+// simulator. Each link is a compact box and the boxes flow into as many
+// columns as fit, so the card uses its width instead of stacking tall rows.
+const COMPACT_LINK_CSS = `
+  .link-list.adaptive-link-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+    gap: 12px;
+  }
+  .link-control.link-control-compact {
+    grid-template-columns: 1fr 1fr;
+    align-content: start;
+    gap: 10px 12px;
+    padding: 12px 14px;
+  }
+  .link-control.link-control-compact .link-info {
+    grid-column: 1 / -1;
+  }
+  .link-control.link-control-compact .link-info + .link-adjust-column {
+    border-left: 0;
+    padding-left: 0;
+  }
+  .link-control.link-control-compact .link-adjust-column {
+    padding-left: 12px;
+    border-left: 1px solid rgba(183, 202, 226, 0.08);
+  }
+  .link-control.link-control-compact .link-state-actions {
+    margin-top: 0;
+    padding-top: 10px;
+  }
+  .link-control.link-control-compact .link-state-buttons .secondary-button {
+    min-width: 64px;
+    padding: 0 10px;
+  }
+`;
+
 // Traffic controls for the shared run. These drive the same backend
 // simulator as the Live Traffic page, so packets show up on the map below.
 function TrafficBar({ state, traffic, navigate }) {
@@ -33,10 +69,13 @@ function TrafficBar({ state, traffic, navigate }) {
 
   const delivered = count((p) => p.status === "delivered");
   const dropped = count((p) => p.status === "dropped");
+  const rejected = count((p) => p.status === "rejected");
   const moving = count((p) => p.status === "in_transit");
   const waiting = count((p) => p.status === "queued" || p.status === "stored");
   const high = count((p) => ["HIGH", "CRITICAL"].includes(p.priority_class));
-  const progress = total ? Math.round(((delivered + dropped) / total) * 100) : 0;
+  const progress = total
+    ? Math.round(((delivered + dropped + rejected) / total) * 100)
+    : 0;
 
   return (
     <section className="tf-simbar">
@@ -82,7 +121,9 @@ function TrafficBar({ state, traffic, navigate }) {
           </div>
           <small>
             {total
-              ? `${delivered}/${total} delivered · ${moving} moving · ${waiting} waiting · ${high} high priority`
+              ? `${delivered}/${total} delivered · ${moving} moving · ${waiting} waiting${
+                  rejected ? ` · ${rejected} duplicates rejected` : ""
+                } · ${high} high priority`
               : "Start traffic to release the telemetry packets onto the map"}
           </small>
         </div>
@@ -167,6 +208,7 @@ function Simulation({ state, refreshState, traffic, navigate }) {
 
   return (
     <>
+      <style>{COMPACT_LINK_CSS}</style>
       <div className="page-header">
         <div>
           <div className="eyebrow">Network Simulation</div>
@@ -236,7 +278,7 @@ function Simulation({ state, refreshState, traffic, navigate }) {
       )}
 
       <div className="dashboard-grid">
-        <section className="card network-host-card">
+        <section className="card network-host-card full-width">
           <div className="card-header">
             <div>
               <h2 className="card-title">Live Network Topology</h2>
@@ -255,7 +297,7 @@ function Simulation({ state, refreshState, traffic, navigate }) {
           />
         </section>
 
-        <section className="card">
+        <section className="card full-width">
           <div className="card-header adaptive-link-header">
             <div>
               <h2 className="card-title">Adaptive Link Controls</h2>
@@ -275,12 +317,12 @@ function Simulation({ state, refreshState, traffic, navigate }) {
           </div>
 
           <div className="card-body">
-            <div className="link-list">
+            <div className="link-list adaptive-link-grid">
               {links.map((link) => {
                 const unusable = !link.active || link.latency >= maxLatency;
 
                 return (
-                  <div className="link-control" key={link.id}>
+                  <div className="link-control link-control-compact" key={link.id}>
                     <div className="link-info">
                       <div className="link-name">
                         {link.id} · {link.status || (unusable ? "UNUSABLE" : "ACTIVE")}
@@ -441,7 +483,15 @@ function Simulation({ state, refreshState, traffic, navigate }) {
                 {state.events.map((event, index) => (
                   <div className="event-item" key={`${event.time}-${index}`}>
                     <div className="event-time">T+{event.time}</div>
-                    <div className="event-text">{event.event}</div>
+                    <div
+                      className={`event-text${
+                        String(event.event || "").startsWith("REROUTE")
+                          ? " event-reroute"
+                          : ""
+                      }`}
+                    >
+                      {event.event}
+                    </div>
                   </div>
                 ))}
               </div>

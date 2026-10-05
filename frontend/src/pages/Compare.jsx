@@ -105,7 +105,7 @@ function narrate(data) {
   if (tick === 0) {
     return (
       `${scenario.message_count} messages wait at ${scenario.source}: ` +
-      `five low-priority and one urgent message queued last. ` +
+      `mostly low-priority traffic and an urgent message queued last. ` +
       `Each link carries ${scenario.link_capacity} messages per tick. ` +
       `Press Simulate to watch the run.`
     );
@@ -166,10 +166,13 @@ function MiniNetwork({ sim, urgentId, plan, tone }) {
   messages.forEach((message) => {
     if (message.copy_of) return;
 
-    if (message.status === "delivered") {
+        if (message.status === "delivered") {
       deliveredAt[message.current_node] =
         (deliveredAt[message.current_node] || 0) + 1;
-    } else if (message.status !== "dropped") {
+    } else if (
+      message.status !== "dropped" &&
+      message.status !== "rejected"
+    ) {
       waitingAt[message.current_node] =
         (waitingAt[message.current_node] || 0) + 1;
     }

@@ -59,6 +59,10 @@ class DTNMessage:
     path_latency: int = 0
     stored_ticks: int = 0
     queued_ticks: int = 0
+    reroute_reason: Optional[str] = None
+    avoided_link: Optional[str] = None
+    last_decision: Optional[str] = None
+    reroute_seq: int = 0
 
     TAMPER_SUFFIX = " [corrupted in transit]"
 
@@ -109,4 +113,5 @@ class DTNMessage:
         # Hash of the payload as it exists now. It differs from
         # payload_hash only if the payload was corrupted.
         data["computed_hash"] = self.calculate_hash()
+        data["route_path"] = list(self.route)
         return data
