@@ -434,7 +434,16 @@ function ModePanel({ title, subtitle, sim, urgentId, tone, plan }) {
           </div>
           <div>
             <small>Dropped</small>
-            <strong>{stats.dropped}</strong>
+            <strong style={{ color: (stats.dropped || 0) > 0 ? "#f87171" : "inherit" }}>
+              {stats.dropped}
+            </strong>
+            {stats.dropped_breakdown && Object.keys(stats.dropped_breakdown).length > 0 && (
+              <span style={{ fontSize: 10, opacity: 0.8, display: "block" }}>
+                {Object.entries(stats.dropped_breakdown)
+                  .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`)
+                  .join(" · ")}
+              </span>
+            )}
           </div>
           <div className={dupFlash ? "cmp-dup-flash" : undefined}>
             <small>Duplicates rejected</small>
@@ -452,18 +461,10 @@ function ModePanel({ title, subtitle, sim, urgentId, tone, plan }) {
 
 const STRATEGIES = [
   ["baseline", "Baseline"],
-  ["reroute", "FIFO + live routing"],
   ["adaptive", "Space DTN"],
-  ["spray", "Spray-and-wait"],
-  ["epidemic", "Epidemic flooding"],
 ];
 
-// Bar colours for the replication strategies (the original three have their
-// own cmp-fill-* classes).
-const EXTRA_FILL = {
-  spray: "#b794f4",
-  epidemic: "#f6ad55",
-};
+const EXTRA_FILL = {};
 
 const signed = (value) => {
   if (value === null || value === undefined) return "—";
@@ -484,7 +485,18 @@ function Scoreboard({ data }) {
       (s) => (s.delivered ? Number(s.average_delay).toFixed(1) : "none yet"),
     ],
     ["Delivered", (s) => `${s.delivered}/${s.total_messages}`],
-    ["Dropped", (s) => s.dropped],
+    [
+      "Messages dropped",
+      (s) => {
+        const breakdown = s.dropped_breakdown;
+        if (!s.dropped) return "0";
+        if (!breakdown || Object.keys(breakdown).length === 0) return `${s.dropped}`;
+        const details = Object.entries(breakdown)
+          .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`)
+          .join(", ");
+        return `${s.dropped} (${details})`;
+      },
+    ],
     ["Duplicate copies rejected", (s) => s.duplicates],
     [
       "Link utilization (%)",
@@ -680,10 +692,10 @@ const plusMinus = (stat) => {
 };
 
 function benchmarkFindings(result) {
-  const { adaptive_vs_baseline: ab, reroute_vs_baseline: rb, adaptive_vs_reroute: ar } =
-    result.improvement;
+  const { adaptive_vs_baseline: ab } = result.improvement || {};
 
   const record = (item) => {
+    if (!item?.urgent_delay_seed_record) return null;
     const r = item.urgent_delay_seed_record;
     const n = r.wins + r.ties + r.losses;
     return n ? `${r.wins} of ${n} runs` : null;
@@ -691,66 +703,25 @@ function benchmarkFindings(result) {
 
   const lines = [];
 
-  if (ab.urgent_delay_reduction_pct !== null) {
+  if (ab && ab.urgent_delay_reduction_pct !== null && ab.urgent_delay_reduction_pct !== undefined) {
     lines.push(
       `Space DTN delivers urgent messages ${ab.urgent_delay_reduction_pct}% sooner than the baseline` +
         (record(ab) ? ` (faster in ${record(ab)})` : "") +
         `, and moves delivery rate by ${signed(ab.delivery_rate_gain_pp)} points.`
     );
+    if (ab.drops_avoided != null) {
+      lines.push(
+        `Packet loss resilience: Space DTN avoided ${ab.drops_avoided} dropped packets per run compared to Baseline under disruption.`
+      );
+    }
   }
 
-  if (rb.urgent_delay_saved_ticks !== null) {
-    lines.push(
-      `Routing effect (FIFO order, live routing vs the fixed plan): urgent delay changes by ${signed(
-        -rb.urgent_delay_saved_ticks
-      )} ticks (negative is faster), delivery rate ${signed(rb.delivery_rate_gain_pp)} points, ${
-        rb.drops_avoided
-      } fewer drops per run.`
-    );
-  }
-
-  if (ar.urgent_delay_saved_ticks !== null) {
-    const low = {
-      adaptive: result.summary.adaptive.class_avg_delay?.LOW,
-      reroute: result.summary.reroute.class_avg_delay?.LOW,
-    };
-    const cost =
-      low.adaptive != null && low.reroute != null
-        ? Math.round((low.adaptive - low.reroute) * 100) / 100
-        : null;
-
-    lines.push(
-      `Priority effect (adding TinyML scheduling on top of live routing): urgent messages arrive ${ar.urgent_delay_saved_ticks} ticks sooner` +
-        (cost !== null
-          ? `, while routine messages wait ${Math.abs(cost)} ticks ${
-              cost >= 0 ? "longer" : "less"
-            }. That is the trade-off.`
-          : ".")
-    );
-  }
-
-  const sp = result.improvement.adaptive_vs_spray;
-  const ep = result.improvement.adaptive_vs_epidemic;
   const sum = result.summary;
-
-  if (sp && sum.spray?.overhead_ratio?.mean != null) {
+  if (sum?.baseline && sum?.adaptive) {
+    const baseDrops = sum.baseline.dropped?.mean ?? 0;
+    const adaptDrops = sum.adaptive.dropped?.mean ?? 0;
     lines.push(
-      `Against spray-and-wait (${result.config.spray_copies} copies per bundle): ` +
-        `delivery rate ${sum.spray.delivery_rate.mean}% vs ${sum.adaptive.delivery_rate.mean}% for Space DTN, ` +
-        `but ${sum.spray.overhead_ratio.mean} transmissions per delivered bundle vs ${sum.adaptive.overhead_ratio.mean}` +
-        (sp.overhead_reduction_pct != null
-          ? ` (${sp.overhead_reduction_pct}% less network cost).`
-          : ".")
-    );
-  }
-
-  if (ep && sum.epidemic?.overhead_ratio?.mean != null) {
-    lines.push(
-      `Against epidemic flooding: delivery rate ${sum.epidemic.delivery_rate.mean}% vs ${sum.adaptive.delivery_rate.mean}%, ` +
-        `with ${sum.epidemic.overhead_ratio.mean} transmissions per delivered bundle vs ${sum.adaptive.overhead_ratio.mean}` +
-        (ep.overhead_reduction_pct != null
-          ? ` (${ep.overhead_reduction_pct}% less network cost).`
-          : ".")
+      `Reliability & drop comparison: Space DTN sustained ${adaptDrops} message drops vs. ${baseDrops} in Baseline under identical network link cutoffs and congestion.`
     );
   }
 
@@ -766,7 +737,6 @@ function Benchmark() {
     scenario: "",
     arrival_process: "burst",
     multi_flow: false,
-    spray_copies: 4,
   });
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -986,19 +956,6 @@ function Benchmark() {
             </select>
           </label>
 
-          <label>
-            <span>Spray Copies (L)</span>
-            <select
-              name="spray_copies"
-              value={params.spray_copies}
-              onChange={change}
-            >
-              <option value={2}>L = 2 copies</option>
-              <option value={4}>L = 4 copies</option>
-              <option value={8}>L = 8 copies</option>
-            </select>
-          </label>
-
           <label style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 8, alignSelf: "flex-end", height: 40, cursor: "pointer" }}>
             <input
               type="checkbox"
@@ -1115,16 +1072,6 @@ function Benchmark() {
               </div>
             )}
 
-            <div className="cmp-note">
-              Spray-and-wait and epidemic flooding replicate bundles. Here
-              they share the same links, buffers and capacities, evict
-              redundant copies when a buffer fills, and get an instant
-              delivery acknowledgement that purges leftover copies, which is
-              generous to them. Spray-and-wait is adapted to a fixed
-              topology: copies are sprayed toward the destination, and the
-              last copy only moves to a node closer to it.
-            </div>
-
             <ul className="cmp-findings">
               {benchmarkFindings(result).map((line) => (
                 <li key={line}>{line}</li>
@@ -1133,8 +1080,8 @@ function Benchmark() {
 
             <div className="cmp-note">
               How much does the priority source matter? This runs the same
-              benchmark with each source and shows only what priority
-              scheduling changes (adaptive vs. FIFO, both with live routing).
+              benchmark with each source and shows what priority
+              scheduling changes between Baseline and Space DTN.
               <div style={{ marginTop: 8 }}>
                 <button
                   className="secondary-button"
@@ -1154,8 +1101,8 @@ function Benchmark() {
                   <thead>
                     <tr>
                       <th>Priority source</th>
-                      <th>Urgent delay: FIFO</th>
-                      <th>Urgent delay: priority</th>
+                      <th>Urgent delay: Baseline</th>
+                      <th>Urgent delay: Space DTN</th>
                       <th>Urgent delay saved</th>
                       <th>Routine delay cost</th>
                     </tr>
@@ -1173,12 +1120,12 @@ function Benchmark() {
                         );
                       }
 
-                      const low = (mode) => item[mode].routine_avg_delay;
+                      const low = (mode) => item[mode]?.routine_avg_delay;
                       const cost =
-                        low("adaptive") != null && low("reroute") != null
+                        low("adaptive") != null && low("baseline") != null
                           ? signed(
                               Math.round(
-                                (low("adaptive") - low("reroute")) * 100
+                                (low("adaptive") - low("baseline")) * 100
                               ) / 100
                             )
                           : "—";
@@ -1188,14 +1135,14 @@ function Benchmark() {
                           <td>
                             {name === "tinyml" ? <strong>{name}</strong> : name}
                           </td>
-                          <td>{plusMinus(item.reroute.urgent_avg_delay)}</td>
-                          <td>{plusMinus(item.adaptive.urgent_avg_delay)}</td>
+                          <td>{plusMinus(item.baseline?.urgent_avg_delay)}</td>
+                          <td>{plusMinus(item.adaptive?.urgent_avg_delay)}</td>
                           <td>
-                            {item.adaptive_vs_reroute.urgent_delay_saved_ticks ??
+                            {item.adaptive_vs_baseline?.urgent_delay_saved_ticks ??
                               "—"}{" "}
                             ticks (
-                            {item.adaptive_vs_reroute
-                              .urgent_delay_reduction_pct ?? "—"}
+                            {item.adaptive_vs_baseline
+                              ?.urgent_delay_reduction_pct ?? "—"}
                             %)
                           </td>
                           <td>{cost} ticks</td>
@@ -1253,10 +1200,10 @@ function Benchmark() {
                       <th>{sweepResult.parameter.replace("_", " ").toUpperCase()}</th>
                       <th>Space DTN Delivery</th>
                       <th>Baseline Delivery</th>
-                      <th>Spray Delivery</th>
                       <th>Space DTN Urgent Delay</th>
+                      <th>Baseline Urgent Delay</th>
                       <th>Space DTN Overhead</th>
-                      <th>Spray Overhead</th>
+                      <th>Baseline Overhead</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1265,10 +1212,10 @@ function Benchmark() {
                         <td><strong>{pt.value}</strong></td>
                         <td>{pt.adaptive?.delivery_rate != null ? `${pt.adaptive.delivery_rate}%` : "—"}</td>
                         <td>{pt.baseline?.delivery_rate != null ? `${pt.baseline.delivery_rate}%` : "—"}</td>
-                        <td>{pt.spray?.delivery_rate != null ? `${pt.spray.delivery_rate}%` : "—"}</td>
                         <td>{pt.adaptive?.urgent_avg_delay != null ? `${pt.adaptive.urgent_avg_delay} ticks` : "—"}</td>
+                        <td>{pt.baseline?.urgent_avg_delay != null ? `${pt.baseline.urgent_avg_delay} ticks` : "—"}</td>
                         <td>{pt.adaptive?.overhead_ratio != null ? `${pt.adaptive.overhead_ratio}x` : "—"}</td>
-                        <td>{pt.spray?.overhead_ratio != null ? `${pt.spray.overhead_ratio}x` : "—"}</td>
+                        <td>{pt.baseline?.overhead_ratio != null ? `${pt.baseline.overhead_ratio}x` : "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1493,7 +1440,7 @@ function Compare() {
               </span>
             </div>
 
-            <div className="cmp-grid">
+            <div className="cmp-grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
               <ModePanel
                 title="Baseline"
                 subtitle="Fixed plan, arrival order"
@@ -1502,16 +1449,6 @@ function Compare() {
                 tone="baseline"
                 plan={plan}
               />
-              {data.reroute && (
-                <ModePanel
-                  title="FIFO + Live Routing"
-                  subtitle="Detours live, arrival order"
-                  sim={data.reroute}
-                  urgentId={data.scenario.urgent_id}
-                  tone="reroute"
-                  plan={null}
-                />
-              )}
               <ModePanel
                 title="Space DTN"
                 subtitle="Live routing, TinyML priority"
@@ -1520,24 +1457,14 @@ function Compare() {
                 tone="adaptive"
                 plan={plan}
               />
-              {data.spray && (
-                <ModePanel
-                  title="Spray-and-Wait"
-                  subtitle="Replication (L=4), token handoff"
-                  sim={data.spray}
-                  urgentId={data.scenario.urgent_id}
-                  tone="spray"
-                  plan={null}
-                />
-              )}
             </div>
 
             <p className="cmp-caveat">
               Priority scores in this scenario are fixed so the run repeats
               exactly; live TinyML scoring is on the Live Traffic page.
-              Latency is scaled simulation time. The scoreboard below includes
-              FIFO with live routing so you can separate routing from priority.
-              The benchmark further down repeats the comparison over many seeded
+              Latency is scaled simulation time. The scoreboard below compares
+              Baseline against Space DTN under identical disruption conditions.
+              The benchmark further down repeats the head-to-head comparison over many seeded
               random outage patterns.
             </p>
           </div>
@@ -1580,7 +1507,7 @@ const COMPARE_CSS = `
 
 .cmp-util-head, .cmp-util-row {
   display: grid;
-  grid-template-columns: 130px repeat(3, minmax(0, 1fr));
+  grid-template-columns: 140px repeat(2, minmax(0, 1fr));
   gap: 14px; align-items: center;
 }
 .cmp-util-head { margin-bottom: 10px; }
@@ -1601,7 +1528,7 @@ const COMPARE_CSS = `
 .cmp-fill-reroute-text { color: #a78bfa; }
 .cmp-fill-adaptive-text { color: #22d3ee; }
 @media (max-width: 800px) {
-  .cmp-util-head, .cmp-util-row { grid-template-columns: 70px repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .cmp-util-head, .cmp-util-row { grid-template-columns: 70px repeat(2, minmax(0, 1fr)); gap: 8px; }
 }
 .cmp-bench-controls { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 14px; }
 .cmp-bench-controls label { display: flex; flex-direction: column; gap: 6px; min-width: 160px; }

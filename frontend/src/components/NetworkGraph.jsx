@@ -14,6 +14,10 @@ export default function NetworkGraph({
   busy = false,
   selectedLinkId,
   onSelectLink,
+  onToggleLink,
+  onDisruptLink,
+  onRestoreLink,
+  onResetConditions,
   compact = false,
 }) {
   const [focusMode, setFocusMode] = useState(false);
@@ -97,6 +101,10 @@ export default function NetworkGraph({
           state={state}
           selectedLinkId={selectedLinkId}
           onSelectLink={onSelectLink}
+          onToggleLink={onToggleLink}
+          onDisruptLink={onDisruptLink}
+          onRestoreLink={onRestoreLink}
+          onResetConditions={onResetConditions}
         />
       </div>
 

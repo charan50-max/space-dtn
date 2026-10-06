@@ -15,6 +15,7 @@ import {
   restoreLink as apiRestoreLink,
   setLinkCongestion,
   replayBundle,
+  createMessage,
 } from "../services/api";
 
 const LATENCY_STEP = 1;
@@ -210,9 +211,9 @@ function TrafficBar({ state, traffic, navigate }) {
           </div>
           <small>
             {total
-              ? `${delivered}/${total} delivered · ${moving} moving · ${waiting} waiting${
-                  rejected ? ` · ${rejected} duplicates rejected` : ""
-                } · ${high} high priority`
+              ? `${delivered}/${total} delivered · ${dropped} dropped · ${moving} moving · ${waiting} waiting${
+                  rejected ? ` · ${rejected} duplicates` : ""
+                } · ⚡ ${high} high priority`
               : "Start traffic to release the telemetry packets onto the map"}
           </small>
         </div>
@@ -317,6 +318,17 @@ function Simulation({ state, refreshState, traffic, navigate }) {
         } else {
           alert("No delivered bundle available to replay. Start traffic first!");
         }
+      } else if (type === "send_high") {
+        await createMessage({
+          source: "GS-1",
+          destination: "GS-2",
+          payload: "CRITICAL: Urgent Space Telemetry Alert",
+          mission_critical: true,
+          anomaly: true,
+          severity: "critical",
+          ttl: 40,
+          abs_z_score: 3.5,
+        });
       } else if (type === "reset_all") {
         await resetAllLinkConditions();
       }
@@ -331,11 +343,9 @@ function Simulation({ state, refreshState, traffic, navigate }) {
           <div className="eyebrow">Network Simulation</div>
           <h1 className="page-title">Adaptive Network Simulator</h1>
           <p className="page-description">
-            Start the traffic run, then break a link with one click or change
-            latency and congestion step by step. A failed link becomes
-            unusable, and the DTN router reroutes or stores packets without
-            any manual intervention. Latency is scaled simulation time, not
-            real orbital delay.
+            Interact directly with communication links in the 3D constellation to enable
+            or disable them. The DTN router dynamically reroutes or stores packets.
+            Send high priority alerts to observe priority queueing in real time.
           </p>
         </div>
 
@@ -374,6 +384,21 @@ function Simulation({ state, refreshState, traffic, navigate }) {
         </div>
 
         <div className="metric-card">
+          <div className="metric-label">Dropped Packets</div>
+          <div
+            className="metric-value"
+            style={{ color: (stats.dropped || 0) > 0 ? "#f85149" : undefined }}
+          >
+            {stats.dropped || 0}
+          </div>
+          <div className="metric-foot">
+            {(stats.dropped || 0) > 0 && stats.dropped_breakdown
+              ? Object.entries(stats.dropped_breakdown).map(([r, c]) => `${c} ${r}`).join(", ")
+              : "zero packet loss"}
+          </div>
+        </div>
+
+        <div className="metric-card">
           <div className="metric-label">Avg Latency</div>
           <div className="metric-value">
             {Number(stats.average_link_latency || 0).toFixed(1)} sim-ms
@@ -395,7 +420,16 @@ function Simulation({ state, refreshState, traffic, navigate }) {
       )}
 
       <div className="scenario-toolbar">
-        <span className="scenario-title">⚡ Named Scenarios & Quick Disruptions:</span>
+        <span className="scenario-title">⚡ Quick Actions & Named Scenarios:</span>
+        <button
+          className="primary-button"
+          style={{ background: "#d29922", borderColor: "#e3b341", color: "#0d1117", fontWeight: 700 }}
+          disabled={busy}
+          onClick={() => injectScenario("send_high")}
+          title="Inject an urgent high-priority telemetry packet into GS-1 to test priority queueing in 3D"
+        >
+          ⚡ Send High Priority Alert
+        </button>
         <button
           className="secondary-button"
           disabled={busy}
@@ -441,9 +475,9 @@ function Simulation({ state, refreshState, traffic, navigate }) {
         <section className="card network-host-card full-width">
           <div className="card-header">
             <div>
-              <h2 className="card-title">Live Network Topology</h2>
+              <h2 className="card-title">Live Network Topology (Interactive 3D Constellation)</h2>
               <p className="card-subtitle">
-                Links respond to their current latency and availability state.
+                Click any link directly in the 3D space to inspect, enable, or disable it.
               </p>
             </div>
           </div>
@@ -452,6 +486,10 @@ function Simulation({ state, refreshState, traffic, navigate }) {
             network={network}
             state={state}
             onAdvance={() => runAction(() => stepSimulation())}
+            onDisruptLink={(linkId) => runAction(() => disruptLink(linkId))}
+            onRestoreLink={(linkId) => runAction(() => apiRestoreLink(linkId))}
+            onResetConditions={(linkId) => runAction(() => resetLinkConditions(linkId))}
+            onToggleLink={() => refreshState()}
             busy={busy}
             interactive
           />
@@ -512,139 +550,6 @@ function Simulation({ state, refreshState, traffic, navigate }) {
                           {isDown ? "Restore" : "Cut Link"}
                         </button>
                       )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        <section className="card full-width">
-          <div className="card-header adaptive-link-header">
-            <div>
-              <h2 className="card-title">Adaptive Link Controls</h2>
-              <p className="card-subtitle">
-                Fail a link to see messages reroute or wait. Restore it to
-                watch stored messages continue.
-              </p>
-            </div>
-
-            <button
-              className="secondary-button adaptive-reset-all"
-              disabled={busy || links.length === 0}
-              onClick={() => runAction(() => resetAllLinkConditions())}
-            >
-              Reset All Links
-            </button>
-          </div>
-
-          <div className="card-body">
-            <div className="link-list adaptive-link-grid">
-              {links.map((link) => {
-                const unusable = !link.active || link.latency >= maxLatency;
-
-                return (
-                  <div className="link-control link-control-compact" key={link.id}>
-                    <div className="link-info">
-                      <div className="link-name">
-                        {link.id} · {link.status || (unusable ? "UNUSABLE" : "ACTIVE")}
-                      </div>
-                      <div className="link-route">
-                        {link.source} → {link.target} · {link.bandwidth} Mbps
-                        {stats.link_utilization_by_link?.[link.id] && (
-                          <>
-                            {" "}
-                            · util{" "}
-                            {Number(
-                              stats.link_utilization_by_link[link.id].utilization
-                            ).toFixed(0)}
-                            %
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="link-adjust-column">
-                      <div className="link-adjust-label">LATENCY</div>
-                      <div className="link-adjust-value">
-                        {link.latency} <span>sim-ms</span>
-                        <small>/ {maxLatency}</small>
-                      </div>
-                      <div className="link-adjust-buttons">
-                        <button
-                          className="secondary-button"
-                          disabled={busy || link.latency <= 1}
-                          onClick={() =>
-                            runAction(() => adjustLinkLatency(link.id, -LATENCY_STEP))
-                          }
-                          title="Decrease latency"
-                        >
-                          −
-                        </button>
-                        <button
-                          className="secondary-button"
-                          disabled={busy || link.latency >= maxLatency}
-                          onClick={() =>
-                            runAction(() => adjustLinkLatency(link.id, LATENCY_STEP))
-                          }
-                          title="Increase latency"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="link-adjust-column">
-                      <div className="link-adjust-label">CONGESTION</div>
-                      <div className="link-adjust-value">
-                        {Number(link.congestion || 0).toFixed(0)}<span>%</span>
-                      </div>
-                      <div className="link-adjust-buttons">
-                        <button
-                          className="secondary-button"
-                          disabled={busy || Number(link.congestion || 0) <= 0}
-                          onClick={() =>
-                            runAction(() => adjustLinkCongestion(link.id, -CONGESTION_STEP))
-                          }
-                          title="Decrease congestion"
-                        >
-                          −
-                        </button>
-                        <button
-                          className="secondary-button"
-                          disabled={busy || Number(link.congestion || 0) >= 100}
-                          onClick={() =>
-                            runAction(() => adjustLinkCongestion(link.id, CONGESTION_STEP))
-                          }
-                          title="Increase congestion"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="link-state-actions">
-                      <span className="link-adjust-label">LINK STATE</span>
-
-                      <div className="link-state-buttons">
-                        <button
-                          className="secondary-button link-fail-button"
-                          disabled={busy || unusable}
-                          onClick={() => runAction(() => failLink(link))}
-                          title="Make this link unusable"
-                        >
-                          Fail
-                        </button>
-                        <button
-                          className="secondary-button link-restore-button"
-                          disabled={busy}
-                          onClick={() => runAction(() => restoreLink(link))}
-                          title="Reset this link to its preset conditions"
-                        >
-                          Restore
-                        </button>
-                      </div>
                     </div>
                   </div>
                 );

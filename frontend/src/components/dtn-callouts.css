@@ -237,9 +237,209 @@
   color: #ff9d3d;
 }
 
+/* ---------- Dropped arrival callouts and rows ---------- */
+
+.dtn-arrival.dropped {
+  border-color: rgba(248, 81, 73, 0.7);
+  background: rgba(30, 8, 8, 0.94);
+  box-shadow: 0 0 18px rgba(248, 81, 73, 0.35);
+  color: #ffdcd7;
+}
+
+.dtn-arrival.dropped b {
+  color: #f85149;
+}
+
+.dtn-arrivals-row.dropped .dtn-arrivals-mark {
+  color: #f85149;
+}
+
+.dtn-arrivals-row.dropped .dtn-arrivals-text {
+  color: #ffa198;
+}
+
+/* ---------- 3D Link Controller Card ---------- */
+
+.space-link-card {
+  position: absolute;
+  top: 60px;
+  right: 18px;
+  width: min(320px, calc(100vw - 36px));
+  padding: 14px 16px;
+  background: rgba(13, 21, 37, 0.92);
+  border: 1px solid rgba(88, 166, 255, 0.35);
+  border-radius: 10px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  color: #f0f6fc;
+  z-index: 50;
+  pointer-events: auto !important;
+  animation: dtn-fade-in 0.2s ease both;
+}
+
+@keyframes dtn-fade-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.space-link-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.space-link-tag {
+  font-size: 10px;
+  font-weight: 800;
+  color: #58a6ff;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.space-link-header strong {
+  font-size: 14px;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.space-link-close {
+  background: transparent;
+  border: none;
+  color: #8b949e;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.space-link-close:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.space-link-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  margin-bottom: 10px;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.space-link-status.active {
+  background: rgba(46, 160, 67, 0.15);
+  border: 1px solid rgba(46, 160, 67, 0.4);
+  color: #3fb950;
+}
+
+.space-link-status.disrupted {
+  background: rgba(248, 81, 73, 0.15);
+  border: 1px solid rgba(248, 81, 73, 0.4);
+  color: #f85149;
+}
+
+.space-link-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 8px 10px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 11px;
+  color: #8b949e;
+}
+
+.space-link-metrics span b {
+  color: #f0f6fc;
+  display: block;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.space-link-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.space-link-btn {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+
+.space-link-btn.btn-disable {
+  background: rgba(248, 81, 73, 0.2);
+  border: 1px solid rgba(248, 81, 73, 0.5);
+  color: #f85149;
+}
+
+.space-link-btn.btn-disable:hover:not(:disabled) {
+  background: #f85149;
+  color: #ffffff;
+}
+
+.space-link-btn.btn-enable {
+  background: rgba(46, 160, 67, 0.2);
+  border: 1px solid rgba(46, 160, 67, 0.5);
+  color: #3fb950;
+}
+
+.space-link-btn.btn-enable:hover:not(:disabled) {
+  background: #2ea043;
+  color: #ffffff;
+}
+
+.space-link-btn.btn-reset {
+  background: rgba(183, 202, 226, 0.1);
+  border: 1px solid rgba(183, 202, 226, 0.2);
+  color: #c9d1d9;
+}
+
+.space-link-btn.btn-reset:hover:not(:disabled) {
+  background: rgba(183, 202, 226, 0.2);
+  color: #ffffff;
+}
+
+.space-link-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Priority tags in 3D route card */
+.dtn-priority-pill {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+  margin-left: 5px;
+}
+
+.dtn-priority-pill.high {
+  background: rgba(255, 225, 74, 0.2);
+  border: 1px solid rgba(255, 225, 74, 0.5);
+  color: #ffe14a;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .dtn-arrival,
-  .dtn-toast {
+  .dtn-toast,
+  .space-link-card {
     animation: none;
   }
 }

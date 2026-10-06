@@ -10,6 +10,11 @@ import {
 } from "@react-three/drei";
 import useArrivals from "./useArrivals";
 import "./dtn-callouts.css";
+import {
+  disruptLink as apiDisruptLink,
+  restoreLink as apiRestoreLink,
+  resetLinkConditions as apiResetLinkConditions,
+} from "../services/api";
 
 /*
  * SPACE DTN — 3D CONSTELLATION
@@ -757,6 +762,7 @@ function CommunicationLink({
   const badgeRef = useRef();
   const wasDownRef = useRef(false);
   const restoreUntilRef = useRef(0);
+  const [hovered, setHovered] = useState(false);
 
   const points = useMemo(
     () =>
@@ -797,14 +803,18 @@ function CommunicationLink({
     }
 
     const restoring = now < restoreUntilRef.current;
-    const core = restoring
+    const core = selected
+      ? new THREE.Color("#ffe14a")
+      : restoring
       ? COLOR_RESTORE
       : !isActive
       ? COLOR_DOWN
       : isRisk
       ? COLOR_RISK
       : COLOR_CORE_ACTIVE;
-    const glow = restoring
+    const glow = selected
+      ? new THREE.Color("#ffe14a")
+      : restoring
       ? COLOR_RESTORE
       : !isActive
       ? COLOR_DOWN
@@ -814,12 +824,12 @@ function CommunicationLink({
 
     if (coreRef.current) {
       coreRef.current.material.color.copy(core);
-      coreRef.current.material.opacity = highlighted || selected ? 1 : isActive ? 0.82 : 0.92;
+      coreRef.current.material.opacity = highlighted || selected || hovered ? 1 : isActive ? 0.82 : 0.92;
     }
 
     if (glowRef.current) {
       glowRef.current.material.color.copy(glow);
-      glowRef.current.material.opacity = highlighted || selected ? 0.36 : isActive ? 0.13 : 0.12;
+      glowRef.current.material.opacity = highlighted || selected || hovered ? 0.48 : isActive ? 0.13 : 0.12;
     }
 
     if (badgeRef.current) {
@@ -833,6 +843,15 @@ function CommunicationLink({
         event.stopPropagation();
         onClick?.();
       }}
+      onPointerOver={(event) => {
+        event.stopPropagation();
+        setHovered(true);
+        document.body.style.cursor = "pointer";
+      }}
+      onPointerOut={() => {
+        setHovered(false);
+        document.body.style.cursor = "auto";
+      }}
     >
       <instancedMesh
         ref={glowRef}
@@ -840,7 +859,7 @@ function CommunicationLink({
         frustumCulled={false}
         visible={false}
       >
-        <cylinderGeometry args={[0.065, 0.065, 1, 10, 1, true]} />
+        <cylinderGeometry args={[selected ? 0.09 : 0.065, selected ? 0.09 : 0.065, 1, 10, 1, true]} />
         <meshBasicMaterial
           color="#00e5ff"
           transparent
@@ -855,7 +874,7 @@ function CommunicationLink({
         frustumCulled={false}
         visible={false}
       >
-        <cylinderGeometry args={[0.018, 0.018, 1, 8, 1, true]} />
+        <cylinderGeometry args={[selected ? 0.03 : 0.018, selected ? 0.03 : 0.018, 1, 8, 1, true]} />
         <meshBasicMaterial
           color="#b8f9ff"
           transparent
@@ -871,15 +890,15 @@ function CommunicationLink({
         visible={false}
         className="space-link-hit"
       >
-        <cylinderGeometry args={[0.14, 0.14, 1, 8, 1, true]} />
+        <cylinderGeometry args={[0.22, 0.22, 1, 8, 1, true]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </instancedMesh>
 
-      {(candidate || !isActive) && (
+      {(candidate || !isActive || selected) && (
         <group ref={badgeRef}>
           <Html center distanceFactor={10} pointerEvents="none">
-            <div className="candidate-chip">
-              {!isActive ? "LINK DOWN" : "DISRUPTION CANDIDATE"}
+            <div className={`candidate-chip ${selected ? "selected" : !isActive ? "down" : ""}`} style={selected ? { borderColor: "#ffe14a", color: "#ffe14a", background: "rgba(35, 30, 5, 0.9)" } : undefined}>
+              {selected ? `${id}: SELECTED` : !isActive ? "LINK DISABLED" : "DISRUPTION CANDIDATE"}
             </div>
           </Html>
         </group>
@@ -907,7 +926,7 @@ function MessageMarker({ message }) {
   );
 
   const isHigh =
-    String(message?.priority_class || "LOW").toUpperCase() === "HIGH";
+    ["HIGH", "CRITICAL"].includes(String(message?.priority_class || "LOW").toUpperCase());
   const isStored =
     String(message?.status || "").toLowerCase() === "stored";
   const isDelivered =
@@ -983,14 +1002,14 @@ function MessageMarker({ message }) {
     ref.current.position.copy(position);
 
     const pulse =
-      1 + Math.sin(now * 5) * 0.16;
+      1 + Math.sin(now * (isHigh ? 7 : 5)) * (isHigh ? 0.25 : 0.16);
     ref.current.scale.setScalar(pulse);
   });
 
   return (
     <group ref={ref}>
       <mesh>
-        <sphereGeometry args={[isHigh ? 0.095 : 0.065, 12, 12]} />
+        <sphereGeometry args={[isHigh ? 0.105 : 0.065, 14, 14]} />
         <meshBasicMaterial
           color={color}
           transparent
@@ -1000,8 +1019,8 @@ function MessageMarker({ message }) {
 
       <pointLight
         color={color}
-        intensity={isHigh ? 1.8 : 0.8}
-        distance={1.2}
+        intensity={isHigh ? 2.4 : 0.8}
+        distance={isHigh ? 1.8 : 1.2}
       />
 
       <Html
@@ -1020,6 +1039,8 @@ function MessageMarker({ message }) {
               ? `BUFFERED at ${message.current_node}`
               : isCopy
               ? "COPY"
+              : isHigh
+              ? `⚡ ${message.priority_class} · ${hopLabel}`
               : hopLabel || message.priority_class || "LOW"}
           </span>
         </div>
@@ -1029,7 +1050,7 @@ function MessageMarker({ message }) {
 }
 
 /*
- * "Reached" / "duplicate rejected" callout pinned to the destination node.
+ * "Reached" / "duplicate rejected" / "dropped" callout pinned to the node.
  * It follows the node (satellites orbit), shows an expanding ring, and
  * fades out on its own. `slot` stacks simultaneous callouts on one node.
  */
@@ -1039,7 +1060,8 @@ function ArrivalCallout({ event, slot }) {
   const bornRef = useRef(null);
 
   const isDuplicate = event.kind === "duplicate";
-  const color = isDuplicate ? "#ff9d3d" : "#4dff91";
+  const isDropped = event.kind === "dropped";
+  const color = isDropped ? "#f85149" : isDuplicate ? "#ff9d3d" : "#4dff91";
 
   useFrame((state) => {
     const now = state.clock.elapsedTime;
@@ -1080,15 +1102,19 @@ function ArrivalCallout({ event, slot }) {
         distanceFactor={8}
         position={[0, 0.8 + slot * 0.55, 0]}
       >
-        <div className={`dtn-arrival ${isDuplicate ? "duplicate" : "reached"}`}>
+        <div className={`dtn-arrival ${isDropped ? "dropped" : isDuplicate ? "duplicate" : "reached"}`}>
           <b>
-            {isDuplicate
+            {isDropped
+              ? `\u2715 DROPPED AT ${event.node}`
+              : isDuplicate
               ? "DUPLICATE REJECTED"
               : `\u2713 REACHED ${event.node}`}
           </b>
           <strong>{event.id}</strong>
           <span>
-            {isDuplicate
+            {isDropped
+              ? `${event.reason || "TTL expired or buffer full"}`
+              : isDuplicate
               ? `copy of ${event.copyOf || "an earlier bundle"} \u00b7 already delivered`
               : `${event.delay != null ? `after ${event.delay} ticks` : "delivered"}${
                   event.verified ? " \u00b7 integrity verified" : ""
@@ -1105,6 +1131,10 @@ function SceneContents({
   state,
   selectedLinkId,
   onSelectLink,
+  onToggleLink,
+  onDisruptLink,
+  onRestoreLink,
+  onResetConditions,
 }) {
 
   const satelliteRefs =
@@ -1114,6 +1144,9 @@ function SceneContents({
     selected,
     setSelected,
   ] = useState(null);
+
+  const [internalSelectedLink, setInternalSelectedLink] = useState(null);
+  const [linkActionBusy, setLinkActionBusy] = useState(false);
 
   const networkNodes =
     network?.nodes ?? [];
@@ -1139,6 +1172,64 @@ function SceneContents({
     [rawLinks]
   );
 
+  const activeSelectedLinkId = selectedLinkId || internalSelectedLink?.id;
+  const selectedLinkObj = useMemo(() => {
+    if (!activeSelectedLinkId) return null;
+    return links.find((l) => l.id === activeSelectedLinkId) || internalSelectedLink;
+  }, [activeSelectedLinkId, links, internalSelectedLink]);
+
+  const handleLinkSelect = (link) => {
+    if (activeSelectedLinkId === link?.id) {
+      setInternalSelectedLink(null);
+      onSelectLink?.(null);
+    } else {
+      setInternalSelectedLink(link);
+      onSelectLink?.(link);
+    }
+  };
+
+  const handleToggleLink = async (link, targetActive) => {
+    try {
+      setLinkActionBusy(true);
+      if (targetActive) {
+        if (onRestoreLink) {
+          await onRestoreLink(link.id);
+        } else {
+          await apiRestoreLink(link.id);
+        }
+      } else {
+        if (onDisruptLink) {
+          await onDisruptLink(link.id);
+        } else {
+          await apiDisruptLink(link.id);
+        }
+      }
+      onToggleLink?.(link, targetActive);
+    } catch (err) {
+      console.error(err);
+      alert(err.message);
+    } finally {
+      setLinkActionBusy(false);
+    }
+  };
+
+  const handleResetLink = async (link) => {
+    try {
+      setLinkActionBusy(true);
+      if (onResetConditions) {
+        await onResetConditions(link.id);
+      } else {
+        await apiResetLinkConditions(link.id);
+      }
+      onToggleLink?.(link, true);
+    } catch (err) {
+      console.error(err);
+      alert(err.message);
+    } finally {
+      setLinkActionBusy(false);
+    }
+  };
+
   const { arrivals, landingIds, history } = useArrivals(state?.messages);
 
   const activeMessages = useMemo(() => {
@@ -1156,6 +1247,16 @@ function SceneContents({
       );
     });
   }, [state?.messages]);
+
+  const sortedActiveMessages = useMemo(() => {
+    return [...activeMessages].sort((a, b) => {
+      const isHighA = ["HIGH", "CRITICAL"].includes(String(a.priority_class || "").toUpperCase());
+      const isHighB = ["HIGH", "CRITICAL"].includes(String(b.priority_class || "").toUpperCase());
+      if (isHighA && !isHighB) return -1;
+      if (!isHighA && isHighB) return 1;
+      return (b.priority_score || 0) - (a.priority_score || 0);
+    });
+  }, [activeMessages]);
 
   // A message dot is drawn only after the message has been sent. Packets
   // still waiting in their source queue have no dot. A packet that has just
@@ -1422,40 +1523,26 @@ function SceneContents({
         )
       )}
 
-      {links.map(
-        (link, index) => (
-          <CommunicationLink
-            key={
-              link.id ??
-              `link-${index}`
-            }
-            id={link.id}
-            source={
-              link.source
-            }
-            target={
-              link.target
-            }
-            status={
-              link.status
-            }
-            congestion={link.congestion}
-            selected={selectedLinkId === link.id}
-            highlighted={
-              isRouteLinkHighlighted(link.source, link.target) ||
-              selected === link.source ||
-              selected === link.target
-            }
-            onClick={() => onSelectLink?.(link)}
-          />
-        )
-      )}
+      {links.map((link, index) => (
+        <CommunicationLink
+          key={link.id ?? `link-${index}`}
+          id={link.id}
+          source={link.source}
+          target={link.target}
+          status={link.status}
+          congestion={link.congestion}
+          selected={activeSelectedLinkId === link.id}
+          highlighted={
+            isRouteLinkHighlighted(link.source, link.target) ||
+            selected === link.source ||
+            selected === link.target
+          }
+          onClick={() => handleLinkSelect(link)}
+        />
+      ))}
 
       {markerMessages.map((message) => (
-        <MessageMarker
-          key={message.id}
-          message={message}
-        />
+        <MessageMarker key={message.id} message={message} />
       ))}
 
       {arrivals.map(
@@ -1492,7 +1579,6 @@ function SceneContents({
           {selected && (
             <div className="space-selection-card">
               <strong>{selected}</strong>
-
               <span>
                 {selected.startsWith("SAT-")
                   ? "Orbiting satellite"
@@ -1501,33 +1587,120 @@ function SceneContents({
             </div>
           )}
 
-          {activeMessages.length > 0 && (
+          {/* 3D Link Interactive Controller Card */}
+          {selectedLinkObj && (
+            <div className="space-link-card">
+              <div className="space-link-header">
+                <div>
+                  <div className="space-link-tag">LINK CONTROLLER</div>
+                  <strong>{selectedLinkObj.id}: {selectedLinkObj.source} ↔ {selectedLinkObj.target}</strong>
+                </div>
+                <button
+                  type="button"
+                  className="space-link-close"
+                  onClick={() => {
+                    setInternalSelectedLink(null);
+                    onSelectLink?.(null);
+                  }}
+                  title="Close link controller"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {(() => {
+                const isDown = ["disrupted", "down", "inactive", "unusable"].includes(selectedLinkObj.status) ||
+                  (Number(selectedLinkObj.latency || 0) >= (network?.parameters?.max_latency || 100));
+
+                return (
+                  <>
+                    <div className={`space-link-status ${isDown ? "disrupted" : "active"}`}>
+                      Status: <b>{isDown ? "DISABLED / CUT" : "ACTIVE / OPERATIONAL"}</b>
+                    </div>
+
+                    <div className="space-link-metrics">
+                      <span>
+                        Latency
+                        <b>{selectedLinkObj.latency ?? "—"} sim-ms</b>
+                      </span>
+                      <span>
+                        Congestion
+                        <b>{Number(selectedLinkObj.congestion || 0).toFixed(0)}%</b>
+                      </span>
+                    </div>
+
+                    <div className="space-link-actions">
+                      {isDown ? (
+                        <button
+                          type="button"
+                          className="space-link-btn btn-enable"
+                          disabled={linkActionBusy}
+                          onClick={() => handleToggleLink(selectedLinkObj, true)}
+                          title="Restore link to active operations"
+                        >
+                          🟢 Enable Link
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="space-link-btn btn-disable"
+                          disabled={linkActionBusy}
+                          onClick={() => handleToggleLink(selectedLinkObj, false)}
+                          title="Disable/cut link to force DTN rerouting"
+                        >
+                          🔴 Disable Link
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        className="space-link-btn btn-reset"
+                        disabled={linkActionBusy}
+                        onClick={() => handleResetLink(selectedLinkObj)}
+                        title="Reset link conditions to defaults"
+                      >
+                        ↺ Reset
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
+          {sortedActiveMessages.length > 0 && (
             <div className="space-route-card">
               <div className="space-route-title">ACTIVE DTN ROUTES</div>
-              {activeMessages.slice(0, 4).map((message) => (
-                <div className="space-route-row" key={`route-${message.id}`}>
-                  <span className="space-route-id">
-                    {message.id}
-                    {message.copy_of && (
-                      <em className="dtn-copy-tag">copy</em>
-                    )}
-                  </span>
-                  <span className="space-route-path">
-                    {(message.route_path?.length ? message.route_path : [message.current_node || message.source, message.destination])
-                      .map((node, index, path) => (
-                        <span key={`${message.id}-${node}-${index}`}>
-                          {node}{index < path.length - 1 ? " → " : ""}
-                        </span>
-                      ))}
-                  </span>
-                </div>
-              ))}
+              {sortedActiveMessages.slice(0, 4).map((message) => {
+                const isHigh = ["HIGH", "CRITICAL"].includes(String(message.priority_class || "").toUpperCase());
+                return (
+                  <div className="space-route-row" key={`route-${message.id}`}>
+                    <span className="space-route-id">
+                      {message.id}
+                      {isHigh && (
+                        <span className="dtn-priority-pill high">HIGH</span>
+                      )}
+                      {message.copy_of && (
+                        <em className="dtn-copy-tag">copy</em>
+                      )}
+                    </span>
+                    <span className="space-route-path">
+                      {(message.route_path?.length ? message.route_path : [message.current_node || message.source, message.destination])
+                        .map((node, index, path) => (
+                          <span key={`${message.id}-${node}-${index}`}>
+                            {node}{index < path.length - 1 ? " → " : ""}
+                          </span>
+                        ))}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
 
           {history.length > 0 && (
             <div className="dtn-arrivals-card">
-              <div className="dtn-arrivals-title">ARRIVALS</div>
+              <div className="dtn-arrivals-title">ARRIVALS & EVENTS</div>
 
               {history.slice(0, 4).map((event) => (
                 <div
@@ -1535,11 +1708,13 @@ function SceneContents({
                   key={event.key}
                 >
                   <span className="dtn-arrivals-mark">
-                    {event.kind === "duplicate" ? "\u00d7" : "\u2713"}
+                    {event.kind === "dropped" ? "\u00d7" : event.kind === "duplicate" ? "\u00d7" : "\u2713"}
                   </span>
                   <span className="dtn-arrivals-id">{event.id}</span>
                   <span className="dtn-arrivals-text">
-                    {event.kind === "duplicate"
+                    {event.kind === "dropped"
+                      ? `dropped at ${event.node}${event.reason ? ` \u00b7 ${event.reason}` : ""}`
+                      : event.kind === "duplicate"
                       ? `rejected at ${event.node}`
                       : `reached ${event.node}${
                           event.delay != null ? ` \u00b7 ${event.delay} ticks` : ""
@@ -1551,11 +1726,9 @@ function SceneContents({
           )}
 
           <div className="space-controls-hint">
-            <b>DRAG</b> rotate
-            &nbsp; • &nbsp;
+            <b>CLICK</b> a link to enable / disable &nbsp; • &nbsp;
+            <b>DRAG</b> rotate &nbsp; • &nbsp;
             <b>SCROLL</b> zoom
-            &nbsp; • &nbsp;
-            <b>CLICK</b> a link to inspect
           </div>
         </div>
       </Html>
@@ -1568,6 +1741,10 @@ export default function SpaceScene({
   state,
   selectedLinkId,
   onSelectLink,
+  onToggleLink,
+  onDisruptLink,
+  onRestoreLink,
+  onResetConditions,
 }) {
   return (
     <div className="space-scene">
@@ -1602,6 +1779,10 @@ export default function SpaceScene({
           state={state}
           selectedLinkId={selectedLinkId}
           onSelectLink={onSelectLink}
+          onToggleLink={onToggleLink}
+          onDisruptLink={onDisruptLink}
+          onRestoreLink={onRestoreLink}
+          onResetConditions={onResetConditions}
         />
       </Canvas>
     </div>

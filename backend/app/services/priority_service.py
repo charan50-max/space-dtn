@@ -351,7 +351,31 @@ class PriorityService:
         )
 
         if anomaly:
+            score += 25
+
+        # Check telemetry statistical anomaly features (z-score / delta)
+        abs_z = abs(float(data.get("abs_z_score") or data.get("z_score") or 0.0))
+        if abs_z >= 2.5:
+            score += 50
+        elif abs_z >= 1.5:
+            score += 35
+        elif abs_z >= 1.0:
+            score += 20
+
+        abs_delta = abs(float(data.get("abs_delta") or data.get("delta_value") or 0.0))
+        if abs_delta >= 2.0:
+            score += 25
+        elif abs_delta >= 1.0:
             score += 15
+
+        # Check explicit urgency flags from dataset or scenario
+        is_urgent = bool(
+            data.get("true_urgent")
+            or data.get("is_urgent")
+            or data.get("urgent")
+        )
+        if is_urgent:
+            score += 45
 
         score = min(
             100,

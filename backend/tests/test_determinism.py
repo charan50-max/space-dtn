@@ -36,7 +36,7 @@ def test_benchmark_run_determinism():
         classifier="oracle",
     )
 
-    for strat in ("baseline", "reroute", "adaptive", "spray"):
+    for strat in res_1["summary"]:
         assert res_1["summary"][strat]["delivery_rate"]["mean"] == res_2["summary"][strat]["delivery_rate"]["mean"]
         assert res_1["summary"][strat]["urgent_avg_delay"]["mean"] == res_2["summary"][strat]["urgent_avg_delay"]["mean"]
         assert res_1["summary"][strat]["transmissions"]["mean"] == res_2["summary"][strat]["transmissions"]["mean"]

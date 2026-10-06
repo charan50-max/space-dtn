@@ -31,10 +31,12 @@ function makeEvent(kind, message, counter) {
     key: `${kind}-${message.id}-${counter}`,
     kind,
     id: message.id,
-    node: message.destination || message.current_node,
+    node: message.current_node || message.destination,
     delay: Number.isFinite(Number(message.delay)) ? Number(message.delay) : null,
     verified: Boolean(message.integrity_verified),
     copyOf: message.copy_of || null,
+    reason: message.reject_reason || (message.ttl <= 0 ? "TTL expired" : "dropped"),
+    priority: message.priority_class || "LOW",
   };
 }
 
@@ -110,6 +112,8 @@ export default function useArrivals(messages) {
         fresh.push(makeEvent("reached", message, counterRef.current));
       } else if (status === "rejected" && message.reject_reason === "duplicate") {
         fresh.push(makeEvent("duplicate", message, counterRef.current));
+      } else if (status === "dropped") {
+        fresh.push(makeEvent("dropped", message, counterRef.current));
       }
     });
 

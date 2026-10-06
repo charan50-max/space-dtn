@@ -177,11 +177,26 @@ class TrafficService:
                 for feature in FEATURES
                 if template.get(feature) is not None
             }
+            # Every 4th extra message is an urgent / high-priority telemetry alert
+            is_high_priority = (index % 4 == 0)
+            if is_high_priority:
+                telemetry["abs_z_score"] = 3.2
+                telemetry["anomaly"] = True
+                telemetry["severity"] = "critical"
+                telemetry["mission_critical"] = True
+                telemetry["true_urgent"] = True
+
             prediction = priority_service.predict(telemetry)
+            payload_text = (
+                f"URGENT: Alert-{index + 1}"
+                if is_high_priority
+                else template.get("payload", f"extra-{index + 1}")
+            )
+
             extra = simulator.add_message(
                 source=source,
                 destination=destination,
-                payload=template.get("payload", f"extra-{index + 1}"),
+                payload=payload_text,
                 priority_score=prediction["priority_score"],
                 priority_class=prediction["priority_class"],
                 priority_probability=prediction.get("priority_probability"),
@@ -191,7 +206,7 @@ class TrafficService:
                 ttl=int(template.get("ttl", 40)),
                 message_id=f"MSG-X{index + 1:03d}",
                 telemetry=telemetry,
-                true_urgent=_packet_label(template),
+                true_urgent=True if is_high_priority else _packet_label(template),
             )
             created.append(extra)
 

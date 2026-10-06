@@ -12,11 +12,9 @@ from backend.app.dtn.disruptions import DisruptionSchedule
 from backend.app.dtn.simulator import DTNSimulator
 
 
-# Published contact plan for the static baseline (two latency-9 paths tie
-# from GS-1 to GS-2, so the plan names one explicitly).
 BASELINE_PLAN = ["GS-1", "SAT-1", "SAT-3", "SAT-5", "GS-2"]
 
-STRATEGIES = ("baseline", "reroute", "adaptive", "spray", "epidemic")
+STRATEGIES = ("baseline", "adaptive")
 
 # Replication budget for spray-and-wait (copies per bundle).
 SPRAY_COPIES = 4
@@ -710,29 +708,35 @@ class BenchmarkService:
                     runs["adaptive"],
                     runs["baseline"],
                 ),
-                "reroute_vs_baseline": self._improvement(
-                    summary["reroute"],
-                    summary["baseline"],
-                    runs["reroute"],
-                    runs["baseline"],
+                **(
+                    {
+                        "reroute_vs_baseline": self._improvement(
+                            summary["reroute"], summary["baseline"], runs["reroute"], runs["baseline"]
+                        ),
+                        "adaptive_vs_reroute": self._improvement(
+                            summary["adaptive"], summary["reroute"], runs["adaptive"], runs["reroute"]
+                        ),
+                    }
+                    if "reroute" in summary
+                    else {}
                 ),
-                "adaptive_vs_reroute": self._improvement(
-                    summary["adaptive"],
-                    summary["reroute"],
-                    runs["adaptive"],
-                    runs["reroute"],
+                **(
+                    {
+                        "adaptive_vs_spray": self._improvement(
+                            summary["adaptive"], summary["spray"], runs["adaptive"], runs["spray"]
+                        ),
+                    }
+                    if "spray" in summary
+                    else {}
                 ),
-                "adaptive_vs_spray": self._improvement(
-                    summary["adaptive"],
-                    summary["spray"],
-                    runs["adaptive"],
-                    runs["spray"],
-                ),
-                "adaptive_vs_epidemic": self._improvement(
-                    summary["adaptive"],
-                    summary["epidemic"],
-                    runs["adaptive"],
-                    runs["epidemic"],
+                **(
+                    {
+                        "adaptive_vs_epidemic": self._improvement(
+                            summary["adaptive"], summary["epidemic"], runs["adaptive"], runs["epidemic"]
+                        ),
+                    }
+                    if "epidemic" in summary
+                    else {}
                 ),
             },
         }
@@ -921,6 +925,8 @@ class BenchmarkService:
             summary = result["summary"]
 
             def pick(mode):
+                if mode not in summary:
+                    return {}
                 return {
                     metric: summary[mode][metric]
                     for metric in (
@@ -937,11 +943,11 @@ class BenchmarkService:
                     key: result["config"][key]
                     for key in ("classifier", "model_type", "threshold")
                 },
-                "reroute": pick("reroute"),
+                "baseline": pick("baseline"),
                 "adaptive": pick("adaptive"),
-                "adaptive_vs_reroute": result["improvement"][
-                    "adaptive_vs_reroute"
-                ],
+                "adaptive_vs_baseline": result["improvement"].get(
+                    "adaptive_vs_baseline", {}
+                ),
             }
 
         return {"sources": sources, "classifiers": list(CLASSIFIERS)}
