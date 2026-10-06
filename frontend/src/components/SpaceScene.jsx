@@ -752,6 +752,7 @@ function CommunicationLink({
   target,
   status,
   congestion = 0,
+  showDisruptionCandidate = false,
   highlighted,
   selected,
   onClick,
@@ -775,7 +776,7 @@ function CommunicationLink({
 
   const isActive = !["disrupted", "down", "inactive", "unusable"].includes(status);
   const isRisk = isActive && Number(congestion) >= 50;
-  const candidate = DISRUPTION_IDS.has(id);
+  const isCandidate = showDisruptionCandidate && DISRUPTION_IDS.has(id);
 
   useFrame((state) => {
     const now = state.clock.elapsedTime;
@@ -894,7 +895,7 @@ function CommunicationLink({
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </instancedMesh>
 
-      {(candidate || !isActive || selected) && (
+      {(isCandidate || !isActive || selected) && (
         <group ref={badgeRef}>
           <Html center distanceFactor={10} pointerEvents="none">
             <div className={`candidate-chip ${selected ? "selected" : !isActive ? "down" : ""}`} style={selected ? { borderColor: "#ffe14a", color: "#ffe14a", background: "rgba(35, 30, 5, 0.9)" } : undefined}>
@@ -1129,6 +1130,8 @@ function ArrivalCallout({ event, slot }) {
 function SceneContents({
   network,
   state,
+  traffic,
+  isSimulationRunning = false,
   selectedLinkId,
   onSelectLink,
   onToggleLink,
@@ -1531,6 +1534,7 @@ function SceneContents({
           target={link.target}
           status={link.status}
           congestion={link.congestion}
+          showDisruptionCandidate={Boolean(isSimulationRunning || traffic?.running)}
           selected={activeSelectedLinkId === link.id}
           highlighted={
             isRouteLinkHighlighted(link.source, link.target) ||
@@ -1739,6 +1743,8 @@ function SceneContents({
 export default function SpaceScene({
   network,
   state,
+  traffic,
+  isSimulationRunning = false,
   selectedLinkId,
   onSelectLink,
   onToggleLink,
@@ -1777,6 +1783,8 @@ export default function SpaceScene({
         <SceneContents
           network={network}
           state={state}
+          traffic={traffic}
+          isSimulationRunning={isSimulationRunning || Boolean(traffic?.running)}
           selectedLinkId={selectedLinkId}
           onSelectLink={onSelectLink}
           onToggleLink={onToggleLink}

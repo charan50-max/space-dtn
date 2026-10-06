@@ -485,6 +485,8 @@ function Simulation({ state, refreshState, traffic, navigate }) {
           <NetworkGraph
             network={network}
             state={state}
+            traffic={traffic}
+            isSimulationRunning={Boolean(traffic?.running)}
             onAdvance={() => runAction(() => stepSimulation())}
             onDisruptLink={(linkId) => runAction(() => disruptLink(linkId))}
             onRestoreLink={(linkId) => runAction(() => apiRestoreLink(linkId))}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, Fragment } from "react";
 
 import StatusBadge from "../components/StatusBadge";
 import DuplicateDemo from "../components/DuplicateDemo";
@@ -12,6 +12,7 @@ import {
 
 function Messages({ state, refreshState }) {
   const [messages, setMessages] = useState([]);
+  const [expandedRawIds, setExpandedRawIds] = useState(new Set());
 
   const [form, setForm] = useState({
     source: "GS-1",
@@ -25,6 +26,18 @@ function Messages({ state, refreshState }) {
 
   const [prediction, setPrediction] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+
+  function handleMessageDoubleClick(id) {
+    setExpandedRawIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
 
   useEffect(() => {
     loadMessages();
@@ -391,55 +404,109 @@ function Messages({ state, refreshState }) {
                 </thead>
 
                 <tbody>
-                  {currentMessages.map((message) => (
-                    <tr key={message.id}>
-                      <td className="mono">
-                        {message.id}
-                        {message.copy_of && (
-                          <em className="dtn-copy-tag">copy</em>
+                  {currentMessages.map((message) => {
+                    const isRawOpen = expandedRawIds.has(message.id);
+                    return (
+                      <Fragment key={message.id}>
+                        <tr
+                          onDoubleClick={() => handleMessageDoubleClick(message.id)}
+                          style={{ cursor: "pointer" }}
+                          title="Double-click to view raw message"
+                        >
+                          <td className="mono">
+                            {message.id}
+                            {message.copy_of && (
+                              <em className="dtn-copy-tag">copy</em>
+                            )}
+                          </td>
+
+                          <td className="mono">
+                            {message.source} →{" "}
+                            {message.destination}
+                          </td>
+
+                          <td
+                            className={`priority-${String(
+                              message.priority_class || "low"
+                            ).toLowerCase()}`}
+                          >
+                            {message.priority_class}
+                            {" · "}
+                            {message.priority_score}
+                          </td>
+
+                          <td>
+                            {message.status === "rejected" ? (
+                              <span className="dtn-badge rejected">
+                                Rejected
+                              </span>
+                            ) : (
+                              <StatusBadge
+                                status={message.status}
+                              />
+                            )}
+                          </td>
+
+                          <td>{message.current_node}</td>
+
+                          <td>{message.hops}</td>
+
+                          <td>
+                            {message.integrity_verified
+                              ? "✓ Verified"
+                              : message.status === "rejected"
+                              ? "—"
+                              : "Pending"}
+                          </td>
+                        </tr>
+
+                        {isRawOpen && (
+                          <tr className="raw-message-row">
+                            <td
+                              colSpan={7}
+                              style={{
+                                padding: "12px 16px",
+                                background: "rgba(13, 21, 37, 0.8)",
+                                borderBottom: "1px solid rgba(88, 166, 255, 0.2)",
+                              }}
+                            >
+                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: "#58a6ff", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                                    Raw Message ({message.id})
+                                  </span>
+                                  <span style={{ fontSize: 11, color: "#8b949e" }}>
+                                    Double-click to collapse
+                                  </span>
+                                </div>
+                                <pre
+                                  style={{
+                                    margin: 0,
+                                    padding: "10px 14px",
+                                    background: "rgba(2, 7, 14, 0.9)",
+                                    border: "1px solid rgba(88, 166, 255, 0.25)",
+                                    borderRadius: 6,
+                                    color: "#e6edf3",
+                                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                                    fontSize: 12,
+                                    lineHeight: 1.5,
+                                    whiteSpace: "pre-wrap",
+                                    wordBreak: "break-all",
+                                  }}
+                                >
+                                  {message.payload
+                                    ? typeof message.payload === "object"
+                                      ? JSON.stringify(message.payload, null, 2)
+                                      : message.payload
+                                    : JSON.stringify(message, null, 2)}
+                                </pre>
+                              </div>
+                            </td>
+                          </tr>
                         )}
-                      </td>
-
-                      <td className="mono">
-                        {message.source} →{" "}
-                        {message.destination}
-                      </td>
-
-                      <td
-                        className={`priority-${String(
-                          message.priority_class || "low"
-                        ).toLowerCase()}`}
-                      >
-                        {message.priority_class}
-                        {" · "}
-                        {message.priority_score}
-                      </td>
-
-                      <td>
-                        {message.status === "rejected" ? (
-                          <span className="dtn-badge rejected">
-                            Rejected
-                          </span>
-                        ) : (
-                          <StatusBadge
-                            status={message.status}
-                          />
-                        )}
-                      </td>
-
-                      <td>{message.current_node}</td>
-
-                      <td>{message.hops}</td>
-
-                      <td>
-                        {message.integrity_verified
-                          ? "✓ Verified"
-                          : message.status === "rejected"
-                          ? "—"
-                          : "Pending"}
-                      </td>
-                    </tr>
-                  ))}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             )}

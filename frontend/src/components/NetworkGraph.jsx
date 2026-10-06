@@ -10,6 +10,8 @@ import SpaceScene from "./SpaceScene";
 export default function NetworkGraph({
   network,
   state,
+  traffic,
+  isSimulationRunning = false,
   onAdvance,
   busy = false,
   selectedLinkId,
@@ -99,6 +101,8 @@ export default function NetworkGraph({
         <SpaceScene
           network={network}
           state={state}
+          traffic={traffic}
+          isSimulationRunning={isSimulationRunning || Boolean(traffic?.running)}
           selectedLinkId={selectedLinkId}
           onSelectLink={onSelectLink}
           onToggleLink={onToggleLink}
