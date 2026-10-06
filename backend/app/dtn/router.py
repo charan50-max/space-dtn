@@ -178,6 +178,10 @@ class StaticPlanRouter:
                 self.plan[(src, dst)] = self._plan_route(src, dst)
 
     def _plan_route(self, source: str, destination: str) -> Optional[List[str]]:
+        """
+        Earliest-arrival search over link windows and latency on the healthy network,
+        computed once. Simplified model of Contact Graph Routing (CGR).
+        """
         if source == destination:
             return [source]
 
@@ -197,12 +201,31 @@ class StaticPlanRouter:
             if current == destination:
                 return path
 
-            for neighbor, link in self.network.get_neighbors(current):
-                if neighbor not in visited:
-                    heapq.heappush(
-                        queue,
-                        (cost + link.latency, neighbor, path + [neighbor]),
-                    )
+            for neighbor, link in self.network.get_neighbors(current, include_inactive=True):
+                if neighbor in visited:
+                    continue
+
+                latency = link.base_latency if link.base_latency else link.latency
+                current_time = int(cost)
+
+                if link.windows:
+                    avail = False
+                    wait_time = 0
+                    for start, end in sorted(link.windows):
+                        if end >= current_time:
+                            wait_time = max(0, start - current_time)
+                            avail = True
+                            break
+                    if not avail:
+                        continue
+                    transit_cost = latency + wait_time
+                else:
+                    transit_cost = latency
+
+                heapq.heappush(
+                    queue,
+                    (cost + transit_cost, neighbor, path + [neighbor]),
+                )
 
         return None
 

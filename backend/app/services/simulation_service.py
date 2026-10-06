@@ -207,7 +207,7 @@ class ComparisonService:
 
     MAX_TICKS = 60
 
-    MODES = ("baseline", "reroute", "adaptive")
+    MODES = ("baseline", "reroute", "adaptive", "spray")
 
     def __init__(self):
         self.sims = {}
@@ -224,6 +224,7 @@ class ComparisonService:
             ),
             "reroute": DTNSimulator("reroute"),
             "adaptive": DTNSimulator("adaptive"),
+            "spray": DTNSimulator("spray", spray_copies=4),
         }
         self.replayed = {mode: False for mode in self.MODES}
 
@@ -322,11 +323,13 @@ class ComparisonService:
         baseline = self.sims["baseline"].snapshot()
         reroute = self.sims["reroute"].snapshot()
         adaptive = self.sims["adaptive"].snapshot()
+        spray = self.sims["spray"].snapshot()
 
         return {
             "baseline": baseline,
             "reroute": reroute,
             "adaptive": adaptive,
+            "spray": spray,
             # Overall: baseline vs the full adaptive system.
             "delta": self._delta(
                 baseline["statistics"], adaptive["statistics"]
@@ -337,6 +340,9 @@ class ComparisonService:
             ),
             "delta_priority": self._delta(
                 reroute["statistics"], adaptive["statistics"]
+            ),
+            "delta_spray": self._delta(
+                spray["statistics"], adaptive["statistics"]
             ),
             "finished": self.is_finished(),
             "scenario": {

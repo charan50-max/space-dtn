@@ -74,6 +74,16 @@ class DTNMessage:
     # None for the non-opportunistic strategies.
     copies_left: Optional[int] = None
 
+    # Reliability features (Phase 5).
+    #   seq_no                  : per-source monotonic sequence counter
+    #   custody_holder          : current custodian node responsible for storage
+    #   custody_acked           : whether downstream node acknowledged custody
+    #   custody_retransmissions : count of retried forwardings by custodian
+    seq_no: Optional[int] = None
+    custody_holder: Optional[str] = None
+    custody_acked: bool = False
+    custody_retransmissions: int = 0
+
     TAMPER_SUFFIX = " [corrupted in transit]"
 
     def __post_init__(self):
@@ -84,6 +94,9 @@ class DTNMessage:
 
         if self.current_node is None:
             self.current_node = self.source
+
+        if self.custody_holder is None:
+            self.custody_holder = self.source
 
         if not self.route:
             self.route = [self.current_node]
