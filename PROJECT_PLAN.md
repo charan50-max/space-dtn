@@ -399,10 +399,10 @@ If time is very short, do **Phase 1, Phase 2.1/2.2/2.4, Phase 7** only. That fix
 
 ## Definition of done
 
-- [ ] Benchmark samples real TinyML scores from a precomputed score bank and also reports oracle and random sources
-- [ ] Urgent metrics use the dataset proxy label (stated as a proxy), not the predicted class
-- [ ] A missing TinyML model is visible in the UI and cannot pass as a TinyML benchmark
-- [ ] At least one opportunistic baseline (spray-and-wait) with an overhead metric
-- [ ] NetworkX cross-check test passing
-- [ ] Four named scenarios runnable from the UI
-- [ ] Tests green; README with limitations; demo rehearsed
+- [x] Benchmark samples real TinyML scores from a precomputed score bank and also reports oracle and random sources
+- [x] Urgent metrics use the dataset proxy label (stated as a proxy), not the predicted class
+- [x] A missing TinyML model is visible in the UI and cannot pass as a TinyML benchmark
+- [x] At least one opportunistic baseline (spray-and-wait) with an overhead metric
+- [x] NetworkX cross-check test passing
+- [x] Four named scenarios runnable from the UI
+- [x] Tests green; README with limitations; demo rehearsed

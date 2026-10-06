@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { getTrafficSource } from "../services/api";
+import { getTrafficSource, getMLStatus } from "../services/api";
 import useArrivals from "../components/useArrivals";
 import "./traffic.css";
 import "../components/dtn-callouts.css";
@@ -185,6 +185,7 @@ function PacketRow({ packet, open, onToggle }) {
 
 function LiveTraffic({ state, traffic, navigate }) {
   const [source, setSource] = useState(null);
+  const [modelStatus, setModelStatus] = useState(null);
   const [filter, setFilter] = useState("all");
   const [onlyHigh, setOnlyHigh] = useState(false);
   const [openId, setOpenId] = useState(null);
@@ -192,6 +193,9 @@ function LiveTraffic({ state, traffic, navigate }) {
   useEffect(() => {
     getTrafficSource()
       .then(setSource)
+      .catch(() => {});
+    getMLStatus()
+      .then(setModelStatus)
       .catch(() => {});
   }, []);
 
@@ -201,6 +205,14 @@ function LiveTraffic({ state, traffic, navigate }) {
     [allMessages]
   );
   const copies = useMemo(() => allMessages.filter(isCopy), [allMessages]);
+
+  const labelledCount = useMemo(
+    () =>
+      packets.filter(
+        (p) => p.true_urgent !== undefined && p.true_urgent !== null
+      ).length,
+    [packets]
+  );
 
   // Messages that just reached their destination (or duplicates that were
   // just rejected), announced for a few seconds.
@@ -337,6 +349,36 @@ function LiveTraffic({ state, traffic, navigate }) {
       {traffic.error && (
         <div className="tf-alert">
           <strong>Traffic backend problem.</strong> {traffic.error}
+        </div>
+      )}
+
+      {modelStatus?.fallback_active && (
+        <div
+          className="tf-alert"
+          style={{
+            borderColor: "#f87171",
+            background: "rgba(248, 113, 113, 0.12)",
+            color: "#fca5a5",
+          }}
+        >
+          <strong>⚠️ TinyML Model Fallback Active:</strong> The trained model is not loaded.
+          Packets are being scored using the lightweight deterministic heuristic policy.
+          {modelStatus.model_error ? ` (${modelStatus.model_error})` : ""}
+        </div>
+      )}
+
+      {packets.length > 0 && labelledCount === 0 && (
+        <div
+          className="tf-alert"
+          style={{
+            borderColor: "#fbbf24",
+            background: "rgba(251, 191, 36, 0.1)",
+            color: "#fde68a",
+          }}
+        >
+          <strong>ℹ️ No Dataset Proxy Labels:</strong> Telemetry packets do not carry pre-labeled
+          urgency flags (0/{packets.length}). Urgency statistics are evaluating based on the
+          predicted priority class.
         </div>
       )}
 

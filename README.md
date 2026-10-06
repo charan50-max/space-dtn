@@ -6,6 +6,9 @@
 > recovery, integrity verification, and a live 3D satellite-network
 > visualization.**
 
+> [!NOTE]
+> **Positioning & Architectural Scope:** This project is a **DTN-inspired simulation framework** created to evaluate adaptive disruption-aware routing and TinyML priority scheduling. It is benchmarked against a simplified static contact-plan baseline, binary Spray-and-Wait ($L=4$), and Epidemic flooding. It is **not** an implementation of NASA LunaNet, NASA ION, or full Contact Graph Routing (CGR).
+
 ------------------------------------------------------------------------
 
 ## 1. Project Overview
@@ -2302,5 +2305,105 @@ Python
 Machine Learning
 ```
 
+------------------------------------------------------------------------
 
+# 53. Evaluation, Precomputed Score Bank & Pytest Suite
+
+### 53.1 Precomputing the TinyML Score Bank
+To evaluate benchmarks using real model behavior without loading TensorFlow inside the Monte Carlo benchmark loop, a precomputed score bank is generated from the test dataset:
+
+```bash
+python tinyml/build_score_bank.py
 ```
+This processes `tinyml/data/processed/tinyml_test.csv` (40,000 samples) through the deployed FP32 TFLite model, outputting `tinyml/data/generated/score_bank.json` with documented precision (50.1%) and recall (81.2%) at decision threshold 0.25. If the model is not found, the script will intentionally fail rather than silently falling back to heuristics.
+
+### 53.2 Automated Test Suite (Pytest)
+A full automated test suite verifies simulator correctness, determinism, buffer boundaries, reliability features, and NetworkX alignment:
+
+```bash
+pytest backend/tests -v
+```
+Verified components:
+1. `test_router_vs_networkx.py`: 45/45 node pairs nominal Dijkstra cost agreement, active link filtering, and resilience reporting.
+2. `test_determinism.py`: Disruption schedule and benchmark summary determinism across seeds.
+3. `test_integrity_duplicates.py`: SHA-256 corrupted payload rejection, duplicate suppression (1 delivery per bundle), clean retransmission delivery.
+4. `test_buffers.py`: Priority-aware eviction strictly at $\ge \text{EVICTION\_MARGIN}$, and protected last-copy replication safety.
+5. `test_urgency_metrics.py`: Urgency metric scoring on dataset proxy labels with graceful fallback.
+6. `test_spray.py`: Binary token handoff, copy bounds ($\le L+1$ across lifecycle), and exactly one delivery.
+7. `test_baseline_waits.py`: Contact-plan waiting under failure vs. live adaptive detours.
+8. `test_reliability.py`: Per-source sequence numbering, destination sequence gap detection, and custody handover tracking.
+
+------------------------------------------------------------------------
+
+# 54. Limitations & Explicit Disclosures
+
+To ensure scientific honesty and transparency when presenting to judges:
+
+1. **Scaled Simulation Time:** Ticks represent discrete forwarding steps and scaled simulation time, not literal orbital ephemerides or physical propagation delays (e.g., light-travel time to Mars/Moon).
+2. **Synthetic Topology:** The 9-node constellation (2 ground stations, 7 satellite relays) models multi-path mesh dynamics and orbital corridors, but is synthetic rather than an exact satellite constellation orbit.
+3. **Simplified Contact Plan Baseline:** The baseline router models static contact plans by precomputing paths on the planned network and holding data during unplanned disruptions. It is a simplified baseline, not full NASA ION or CGR.
+4. **Replication Baseline Adaptation:** Standard Spray-and-Wait is designed for mobile ad-hoc random encounters. In this mostly-connected mesh, it is adapted so copies spray toward the destination, and single tokens only advance if closer to the target. Additionally, both Spray-and-Wait and Epidemic receive idealized instant delivery acknowledgments to prune obsolete copies and prevent strawman buffer choking.
+5. **Urgency is an Anomaly Proxy:** The training dataset does not have a native space mission DTN priority label. Urgency is trained on an anomaly-detection proxy. At the deployed 0.25 threshold, the model delivers ~0.50 precision and ~0.81 recall, trading off false alarms to ensure urgent events are caught.
+
+------------------------------------------------------------------------
+
+# 55. DTN Metrics Glossary
+
+| Metric | Definition | Significance |
+|---|---|---|
+| **Delivery Rate (%)** | Ratio of unique original bundles delivered to total bundles generated. | Primary reliability metric. |
+| **Urgent Delay (ticks)** | Mean simulation ticks from creation to delivery for bundles tagged with the proxy urgency label. | Speed of critical message handling under contention. |
+| **Average Delay (ticks)** | Mean delivery delay across all delivered bundles regardless of priority. | Global latency across routine and urgent traffic. |
+| **Link Utilization (%)** | Ratio of link transmission slots used to slots available while the link is active. | Capacity efficiency and avoidance of network idling. |
+| **Transmissions** | Total hops traversed across all bundle copies and replicas. | Network and radio energy expenditure. |
+| **Overhead Ratio** | Total transmissions divided by delivered original bundles. | Baseline & Adaptive = ~1.0–2.5x; Spray & Epidemic = 5.0–15.0x+. |
+| **Buffer Blocked** | Count of forwarding attempts delayed because downstream relay storage was full. | Measures relay buffer congestion pressure. |
+| **Buffer Evictions** | Lower-priority residents dropped from full buffers to make room for higher-priority newcomers ($\ge \text{EVICTION\_MARGIN}$). | Priority engine buffer management under stress. |
+| **Custody Retransmissions** | Retransmissions or store-and-forward retries executed by custody holders. | Demonstrates hop-by-hop reliable custody transfer. |
+| **Sequence Gaps** | Missing bundle sequence numbers detected at destination upon bundle arrival. | Measures out-of-order and dropped packet boundaries per source. |
+
+------------------------------------------------------------------------
+
+# 56. 5-Minute Demo Script
+
+1. **Live Traffic & TinyML Priorities (1 min):**
+   - Open **Live Traffic** page. Click *Start Traffic*.
+   - Point out TinyML scoring: packets receive probability scores, with $\ge 0.25$ labeled HIGH.
+   - Show how HIGH packets move to the front of transmission queues and arrive with lower latency.
+2. **Topological Resilience & Mid-Run Link Failure (1 min):**
+   - Switch to **Simulation** page. Point out the *Topological Resilience & Most Critical Links* card.
+   - Click *Cut Min-Cut Link (L5)* or *Break Transit Link (L4)*.
+   - Show in 3D that urgent packets detour via alternate satellite corridors (e.g., SAT-2/SAT-5), while routine packets buffer in store-and-forward storage.
+3. **Integrity & Duplicate Replay (1 min):**
+   - Click *Replay Duplicate* on an already delivered packet: destination rejects it with `duplicate` status; delivered count does not change.
+   - Corrupt an in-flight packet: destination verifies SHA-256, flags integrity mismatch, and drops the payload.
+4. **Compare Page & Benchmark (1.5 min):**
+   - Navigate to **Compare**. Show the 4-way scripted comparison: Baseline (stalls on broken link) vs FIFO vs Space DTN (expedites urgent) vs Spray-and-Wait (replicates).
+   - Scroll to **Statistical Benchmark**: select *Scenario* (e.g., `long_outage` or `critical_cut`), click *Run Benchmark*.
+   - Review 95% Confidence Intervals across 5 strategies: Space DTN achieves competitive delivery with $\sim 1.5\text{x}$ overhead, whereas Spray/Epidemic consume $\sim 6\text{x}–12\text{x}$ transmissions.
+   - Click *Compare priority sources* to demonstrate TinyML vs Oracle (upper bound) vs Random (lower bound).
+   - Click *Export CSV* to show reproducible data export.
+5. **Closing on Limitations (30 sec):**
+   - Open the **TinyML** page, show the explicit threshold justification ($\text{recall} = 81.2\%$), and articulate the anomaly-proxy framing.
+
+------------------------------------------------------------------------
+
+# 57. Prepared Answers to Judges' Questions
+
+### Q1: Which strategies and metrics did you compare, and how did you ensure statistical validity?
+**Answer:** We compare five strategies:
+1. *Baseline*: Static contact-plan routing with FIFO queues.
+2. *Reroute*: Live disruption-aware routing with FIFO queues (isolating routing benefit).
+3. *Space DTN (Adaptive)*: Live disruption-aware routing with TinyML priority scheduling (isolating priority benefit).
+4. *Spray-and-Wait ($L=4$)*: Controlled opportunistic flooding.
+5. *Epidemic*: Uncontrolled flooding.
+We evaluate Delivery Rate, Urgent Delay, Link Utilization, and Overhead Ratio (transmissions per delivery) over $N \ge 20$ identical pseudo-random seeds with 95% Confidence Intervals.
+
+### Q2: What happens if a critical link is cut mid-transmission?
+**Answer:** The simulator detects the link outage on the next tick. The static baseline cannot adapt and stores messages at the boundary node. Space DTN recalculates shortest-cost paths incorporating latency, congestion, and buffer availability, detouring urgent data around the failure while buffering routine packets if capacity is constrained.
+
+### Q3: How do you detect data corruption and duplicate arrivals?
+**Answer:** Every bundle carries a cryptographic SHA-256 payload digest and a unique `bundle_id`. When a bundle reaches its destination, the payload is hashed and compared to the digest; corruptions are dropped with an `integrity` failure event. The destination maintains a delivered `bundle_id` registry; any subsequent arrival is rejected as a `duplicate`, preventing duplicate processing.
+
+### Q4: What happens when a relay node's storage buffer fills up?
+**Answer:** Each satellite relay has a finite `buffer_capacity`. In FIFO/Baseline, full buffers block incoming transmissions (`buffer_blocked`). In Space DTN, the adaptive priority engine evaluates incoming bundles against resident bundles: if an incoming bundle outranks the lowest-priority resident by at least `EVICTION_MARGIN` (20 points), the resident is evicted to make room (`buffer_evicted`), guaranteeing urgent telemetry is never blocked by routine housekeeping data.

@@ -763,6 +763,10 @@ function Benchmark() {
     messages: 36,
     buffer_capacity: 10,
     classifier: "tinyml",
+    scenario: "",
+    arrival_process: "burst",
+    multi_flow: false,
+    spray_copies: 4,
   });
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -771,6 +775,12 @@ function Benchmark() {
   const [sourcesBusy, setSourcesBusy] = useState(false);
   const [sourcesError, setSourcesError] = useState("");
   const [modelStatus, setModelStatus] = useState(null);
+
+  // Parameter sensitivity sweep state
+  const [sweepParam, setSweepParam] = useState("link_capacity");
+  const [sweepResult, setSweepResult] = useState(null);
+  const [sweepBusy, setSweepBusy] = useState(false);
+  const [sweepError, setSweepError] = useState("");
 
   // Show a banner if the TinyML model is not loaded and the heuristic
   // fallback is in use, so a fallback run is never mistaken for TinyML.
@@ -790,11 +800,24 @@ function Benchmark() {
   }, []);
 
   function change(event) {
-    const { name, value } = event.target;
+    const { name, value, type, checked } = event.target;
     setParams((current) => ({
       ...current,
-      [name]: name === "classifier" ? value : Number(value),
+      [name]:
+        type === "checkbox"
+          ? checked
+          : ["classifier", "scenario", "arrival_process"].includes(name)
+          ? value
+          : Number(value),
     }));
+  }
+
+  function cleanParamsObject(obj) {
+    return Object.fromEntries(
+      Object.entries(obj).filter(
+        ([_, v]) => v !== "" && v !== null && v !== undefined
+      )
+    );
   }
 
   async function compareSources() {
@@ -802,7 +825,7 @@ function Benchmark() {
       setSourcesBusy(true);
       setSourcesError("");
       const { classifier, ...rest } = params;
-      const query = new URLSearchParams(rest).toString();
+      const query = new URLSearchParams(cleanParamsObject(rest)).toString();
       setSources(await request(`/benchmark/priority-sources?${query}`, "GET"));
     } catch (err) {
       console.error(err);
@@ -816,13 +839,41 @@ function Benchmark() {
     try {
       setBusy(true);
       setError("");
-      const query = new URLSearchParams(params).toString();
+      const query = new URLSearchParams(cleanParamsObject(params)).toString();
       setResult(await request(`/benchmark?${query}`, "GET"));
     } catch (err) {
       console.error(err);
       setError(err.message || "Benchmark failed.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  function downloadCsv() {
+    const query = new URLSearchParams({
+      ...cleanParamsObject(params),
+      format: "csv",
+    }).toString();
+    window.open(`${COMPARE_URL}/benchmark?${query}`, "_blank");
+  }
+
+  async function runSweep() {
+    try {
+      setSweepBusy(true);
+      setSweepError("");
+      const query = new URLSearchParams({
+        parameter: sweepParam,
+        seeds: 5,
+        messages: params.messages || 24,
+        classifier: params.classifier || "tinyml",
+      }).toString();
+      const res = await request(`/benchmark/sweeps?${query}`, "GET");
+      setSweepResult(res);
+    } catch (err) {
+      console.error(err);
+      setSweepError(err.message || "Parameter sweep failed.");
+    } finally {
+      setSweepBusy(false);
     }
   }
 
@@ -851,13 +902,34 @@ function Benchmark() {
           </p>
         </div>
 
-        <button className="primary-button" onClick={run} disabled={busy}>
-          {busy ? "Running…" : result ? "Run again" : "Run benchmark"}
-        </button>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <button
+            className="secondary-button"
+            onClick={downloadCsv}
+            disabled={busy}
+            title="Download full benchmark run results as CSV"
+          >
+            Export CSV
+          </button>
+          <button className="primary-button" onClick={run} disabled={busy}>
+            {busy ? "Running…" : result ? "Run again" : "Run benchmark"}
+          </button>
+        </div>
       </div>
 
       <div className="card-body">
         <div className="cmp-bench-controls">
+          <label>
+            <span>Stress Scenario</span>
+            <select name="scenario" value={params.scenario} onChange={change}>
+              <option value="">Standard (Random Disruptions)</option>
+              <option value="random_outages">Random Outages (General Resilience)</option>
+              <option value="long_outage">Long Outage (Transit Severed 25t, Buffer 4)</option>
+              <option value="critical_cut">Critical Cut (Access Severed 18t)</option>
+              <option value="duplicate_corrupt_burst">Duplicate & Corruption Burst</option>
+            </select>
+          </label>
+
           <label>
             <span>Runs (random seeds)</span>
             <select name="seeds" value={params.seeds} onChange={change}>
@@ -899,6 +971,43 @@ function Benchmark() {
               <option value={10}>Roomy (10)</option>
               <option value={4}>Tight (4)</option>
             </select>
+          </label>
+
+          <label>
+            <span>Arrival Process</span>
+            <select
+              name="arrival_process"
+              value={params.arrival_process}
+              onChange={change}
+            >
+              <option value="burst">Burst (t=0)</option>
+              <option value="poisson">Poisson Process</option>
+              <option value="uniform">Uniform Arrivals</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Spray Copies (L)</span>
+            <select
+              name="spray_copies"
+              value={params.spray_copies}
+              onChange={change}
+            >
+              <option value={2}>L = 2 copies</option>
+              <option value={4}>L = 4 copies</option>
+              <option value={8}>L = 8 copies</option>
+            </select>
+          </label>
+
+          <label style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 8, alignSelf: "flex-end", height: 40, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              name="multi_flow"
+              checked={params.multi_flow}
+              onChange={change}
+              style={{ width: 16, height: 16 }}
+            />
+            <span style={{ fontSize: 12, textTransform: "none", opacity: 0.9 }}>Multi-Flow (Sats & Ground)</span>
           </label>
         </div>
 
@@ -1093,6 +1202,75 @@ function Benchmark() {
                         </tr>
                       );
                     })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="cmp-note" style={{ marginTop: 24 }}>
+              <strong>Parameter Sensitivity Sweep</strong>
+              <p style={{ margin: "4px 0 10px", fontSize: 13, opacity: 0.8 }}>
+                Sweep a network constraint across multiple values to observe where adaptive routing
+                and priority scheduling provide the largest marginal resilience gains.
+              </p>
+              <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                  <span>Sweep parameter:</span>
+                  <select
+                    value={sweepParam}
+                    onChange={(e) => setSweepParam(e.target.value)}
+                    style={{
+                      minHeight: 36,
+                      padding: "0 10px",
+                      borderRadius: 8,
+                      border: "1px solid rgba(255,255,255,0.15)",
+                      background: "#000",
+                      color: "inherit",
+                    }}
+                  >
+                    <option value="link_capacity">Link Capacity (1 to 4 msgs/tick)</option>
+                    <option value="buffer_capacity">Relay Buffer Capacity (4 to 20 msgs)</option>
+                    <option value="outages">Disruption Outages (1 to 8 link cuts)</option>
+                  </select>
+                </label>
+                <button
+                  className="secondary-button"
+                  onClick={runSweep}
+                  disabled={sweepBusy}
+                >
+                  {sweepBusy ? "Running sweep…" : "Run Parameter Sweep"}
+                </button>
+              </div>
+            </div>
+
+            {sweepError && <div className="cmp-error">{sweepError}</div>}
+
+            {sweepResult && (
+              <div className="table-wrapper" style={{ marginTop: 12 }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>{sweepResult.parameter.replace("_", " ").toUpperCase()}</th>
+                      <th>Space DTN Delivery</th>
+                      <th>Baseline Delivery</th>
+                      <th>Spray Delivery</th>
+                      <th>Space DTN Urgent Delay</th>
+                      <th>Space DTN Overhead</th>
+                      <th>Spray Overhead</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sweepResult.results.map((pt) => (
+                      <tr key={pt.value}>
+                        <td><strong>{pt.value}</strong></td>
+                        <td>{pt.adaptive?.delivery_rate != null ? `${pt.adaptive.delivery_rate}%` : "—"}</td>
+                        <td>{pt.baseline?.delivery_rate != null ? `${pt.baseline.delivery_rate}%` : "—"}</td>
+                        <td>{pt.spray?.delivery_rate != null ? `${pt.spray.delivery_rate}%` : "—"}</td>
+                        <td>{pt.adaptive?.urgent_avg_delay != null ? `${pt.adaptive.urgent_avg_delay} ticks` : "—"}</td>
+                        <td>{pt.adaptive?.overhead_ratio != null ? `${pt.adaptive.overhead_ratio}x` : "—"}</td>
+                        <td>{pt.spray?.overhead_ratio != null ? `${pt.spray.overhead_ratio}x` : "—"}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -1324,6 +1502,16 @@ function Compare() {
                 tone="baseline"
                 plan={plan}
               />
+              {data.reroute && (
+                <ModePanel
+                  title="FIFO + Live Routing"
+                  subtitle="Detours live, arrival order"
+                  sim={data.reroute}
+                  urgentId={data.scenario.urgent_id}
+                  tone="reroute"
+                  plan={null}
+                />
+              )}
               <ModePanel
                 title="Space DTN"
                 subtitle="Live routing, TinyML priority"
@@ -1332,6 +1520,16 @@ function Compare() {
                 tone="adaptive"
                 plan={plan}
               />
+              {data.spray && (
+                <ModePanel
+                  title="Spray-and-Wait"
+                  subtitle="Replication (L=4), token handoff"
+                  sim={data.spray}
+                  urgentId={data.scenario.urgent_id}
+                  tone="spray"
+                  plan={null}
+                />
+              )}
             </div>
 
             <p className="cmp-caveat">
@@ -1514,13 +1712,15 @@ const COMPARE_CSS = `
 
 .cmp-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 18px;
   margin-bottom: 14px;
 }
-@media (max-width: 1100px) { .cmp-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .cmp-grid { grid-template-columns: 1fr; } }
 .cmp-panel.cmp-baseline { border-top: 3px solid #94a3b8; }
+.cmp-panel.cmp-reroute { border-top: 3px solid #a78bfa; }
 .cmp-panel.cmp-adaptive { border-top: 3px solid #22d3ee; }
+.cmp-panel.cmp-spray { border-top: 3px solid #b794f4; }
 .cmp-panel-body { display: flex; flex-direction: column; gap: 12px; }
 .cmp-network { width: 100%; height: auto; aspect-ratio: 1.35 / 1; max-height: 380px; display: block; }
 .cmp-urgent-pulse { animation: cmp-ring-pulse 1.2s ease-in-out infinite; }

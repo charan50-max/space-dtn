@@ -215,6 +215,24 @@ function TinyML() {
 
       </div>
 
+      {status?.fallback_active && (
+        <div
+          style={{
+            padding: "12px 16px",
+            marginBottom: 20,
+            borderRadius: 10,
+            border: "1px solid rgba(248, 113, 113, 0.5)",
+            background: "rgba(248, 113, 113, 0.1)",
+            color: "#fca5a5",
+            fontSize: 14,
+            lineHeight: 1.5,
+          }}
+        >
+          <strong>⚠️ TinyML Model Fallback Active:</strong> The TensorFlow Lite model could not be loaded
+          {status.model_error ? ` (${status.model_error})` : ""}. The backend is currently using the
+          lightweight deterministic heuristic policy instead.
+        </div>
+      )}
 
       {/* ======================================================
           HERO
@@ -366,6 +384,27 @@ function TinyML() {
               the decision threshold, so both cut-offs are shown.
 
             </p>
+
+            <div
+              style={{
+                marginTop: 14,
+                padding: "10px 14px",
+                borderRadius: 8,
+                background: "rgba(251, 191, 36, 0.08)",
+                border: "1px solid rgba(251, 191, 36, 0.35)",
+                fontSize: 13,
+                lineHeight: 1.55,
+                color: "#fde68a",
+              }}
+            >
+              <strong>Important Evaluation Framing:</strong> The training label is an{" "}
+              <em>anomaly-derived urgency proxy</em> from telemetry features, not ground-truth
+              operational mission urgency. The deployed decision threshold of{" "}
+              <strong>{Number(threshold).toFixed(2)}</strong> is intentionally tuned to favor recall
+              (<strong>{formatPercent(deployedMetrics?.recall)}</strong> caught with{" "}
+              <strong>{formatPercent(deployedMetrics?.precision)}</strong> precision),
+              ensuring time-sensitive anomalies are expedited.
+            </div>
 
           </div>
 
