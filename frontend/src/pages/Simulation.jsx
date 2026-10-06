@@ -10,6 +10,11 @@ import {
   adjustLinkLatency,
   adjustLinkCongestion,
   resetLinkConditions,
+  getResilience,
+  disruptLink,
+  restoreLink as apiRestoreLink,
+  setLinkCongestion,
+  replayBundle,
 } from "../services/api";
 
 const LATENCY_STEP = 1;
@@ -57,6 +62,90 @@ const COMPACT_LINK_CSS = `
   .link-control.link-control-compact .link-state-buttons .secondary-button {
     min-width: 64px;
     padding: 0 10px;
+  }
+  .scenario-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    background: rgba(18, 28, 45, 0.7);
+    border: 1px solid rgba(88, 166, 255, 0.2);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+  }
+  .scenario-toolbar .scenario-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #58a6ff;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-right: 6px;
+  }
+  .resilience-summary-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 6px;
+    margin-bottom: 14px;
+    font-size: 0.85rem;
+  }
+  .resilience-summary-bar span strong {
+    color: #58a6ff;
+    margin-left: 4px;
+  }
+  .resilience-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .resilience-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .resilience-badge.critical {
+    background: rgba(248, 81, 73, 0.2);
+    color: #f85149;
+    border: 1px solid rgba(248, 81, 73, 0.4);
+  }
+  .resilience-badge.delay {
+    background: rgba(210, 153, 34, 0.2);
+    color: #e3b341;
+    border: 1px solid rgba(210, 153, 34, 0.4);
+  }
+  .resilience-badge.redundant {
+    background: rgba(46, 160, 67, 0.2);
+    color: #3fb950;
+    border: 1px solid rgba(46, 160, 67, 0.4);
+  }
+  .critical-link-card {
+    background: rgba(13, 21, 37, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .critical-link-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .critical-link-endpoints {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #f0f6fc;
+  }
+  .critical-link-alt {
+    font-size: 0.78rem;
+    color: #8b949e;
   }
 `;
 
@@ -146,6 +235,7 @@ function TrafficBar({ state, traffic, navigate }) {
 
 function Simulation({ state, refreshState, traffic, navigate }) {
   const [baseNetwork, setNetwork] = useState(null);
+  const [resilience, setResilience] = useState(null);
   const [busy, setBusy] = useState(false);
 
   // Link state always comes from the shared simulator snapshot, so Fail,
@@ -166,8 +256,12 @@ function Simulation({ state, refreshState, traffic, navigate }) {
 
   async function loadNetwork() {
     try {
-      const data = await getNetwork();
-      setNetwork(data);
+      const [netData, resData] = await Promise.all([
+        getNetwork(),
+        getResilience().catch(() => null),
+      ]);
+      setNetwork(netData);
+      if (resData) setResilience(resData);
     } catch (err) {
       console.error(err);
     }
@@ -204,6 +298,29 @@ function Simulation({ state, refreshState, traffic, navigate }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function injectScenario(type) {
+    await runAction(async () => {
+      if (type === "cut_l5") {
+        await disruptLink("L5");
+      } else if (type === "cut_l4") {
+        await disruptLink("L4");
+      } else if (type === "congest_l10") {
+        await setLinkCongestion("L10", 80);
+      } else if (type === "replay_dup") {
+        const delivered = (state?.messages || []).find(
+          (m) => m.status === "delivered" && !m.copy_of
+        );
+        if (delivered) {
+          await replayBundle(delivered.id);
+        } else {
+          alert("No delivered bundle available to replay. Start traffic first!");
+        }
+      } else if (type === "reset_all") {
+        await resetAllLinkConditions();
+      }
+    });
   }
 
   return (
@@ -277,6 +394,49 @@ function Simulation({ state, refreshState, traffic, navigate }) {
         <TrafficBar state={state} traffic={traffic} navigate={navigate} />
       )}
 
+      <div className="scenario-toolbar">
+        <span className="scenario-title">⚡ Named Scenarios & Quick Disruptions:</span>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() => injectScenario("cut_l5")}
+          title="Cut access link L5 (SAT-5 ↔ GS-2). Stresses min-cut resilience & forces store-and-forward"
+        >
+          Cut Min-Cut Link (L5)
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() => injectScenario("cut_l4")}
+          title="Cut primary transit link L4 (SAT-3 ↔ SAT-5). Forces adaptive routing detour"
+        >
+          Break Transit Link (L4)
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() => injectScenario("congest_l10")}
+          title="Surge congestion on L10 to 80%. Demonstrates nonlinear congestion avoidance"
+        >
+          Congest Detour (L10 80%)
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() => injectScenario("replay_dup")}
+          title="Re-send a copy of an already delivered bundle to test duplicate detection"
+        >
+          Replay Duplicate
+        </button>
+        <button
+          className="secondary-button"
+          disabled={busy}
+          onClick={() => injectScenario("reset_all")}
+        >
+          Restore All Links
+        </button>
+      </div>
+
       <div className="dashboard-grid">
         <section className="card network-host-card full-width">
           <div className="card-header">
@@ -295,6 +455,69 @@ function Simulation({ state, refreshState, traffic, navigate }) {
             busy={busy}
             interactive
           />
+        </section>
+
+        <section className="card full-width">
+          <div className="card-header">
+            <div>
+              <h2 className="card-title">Topological Resilience & Most Critical Links (NetworkX Cross-Check)</h2>
+              <p className="card-subtitle">
+                NetworkX graph analysis: edge connectivity, minimum cut, and per-link criticality ranking.
+              </p>
+            </div>
+          </div>
+
+          <div className="card-body">
+            {resilience && (
+              <div className="resilience-summary-bar">
+                <span>Bridges: <strong>{resilience.global_resilience?.bridge_count ?? 0} (biconnected mesh)</strong></span>
+                <span>Articulation Points: <strong>{resilience.global_resilience?.articulation_points?.join(", ") || "None"}</strong></span>
+                <span>Edge Connectivity: <strong>{resilience.path_resilience?.edge_connectivity ?? 2}</strong></span>
+                <span>Disjoint Paths: <strong>{resilience.path_resilience?.disjoint_paths_count ?? 2}</strong></span>
+                <span>Minimum Edge Cut: <strong>{resilience.path_resilience?.minimum_edge_cut?.map((e) => e.join(" ↔ ")).join("; ") || "L5"}</strong></span>
+              </div>
+            )}
+
+            <div className="resilience-grid">
+              {(resilience?.critical_links || []).slice(0, 6).map((item) => {
+                const liveLink = links.find((l) => l.id === item.link_id);
+                const isDown = !liveLink?.active || (liveLink?.latency || 0) >= maxLatency;
+                const isDelay = item.extra_latency && item.extra_latency > 0;
+                const badgeClass = item.disconnects ? "critical" : (isDelay ? "delay" : "redundant");
+
+                return (
+                  <div className="critical-link-card" key={item.link_id}>
+                    <div className="critical-link-header">
+                      <span className="critical-link-endpoints">{item.link_id}: {item.source} ↔ {item.target}</span>
+                      <span className={`resilience-badge ${badgeClass}`}>{item.status}</span>
+                    </div>
+                    <div className="critical-link-alt">
+                      {item.alternate_path ? (
+                        <span>Detour: {item.alternate_path.join(" → ")} ({item.alternate_cost}ms)</span>
+                      ) : (
+                        <span>No alternate path exists (Graph disconnected)</span>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+                      <span style={{ fontSize: "0.75rem", color: isDown ? "#f85149" : "#3fb950" }}>
+                        Status: <strong>{isDown ? "UNUSABLE" : "ACTIVE"}</strong>
+                      </span>
+                      {liveLink && (
+                        <button
+                          className="secondary-button"
+                          style={{ padding: "2px 8px", fontSize: "0.75rem", minWidth: 64 }}
+                          disabled={busy}
+                          onClick={() => runAction(() => isDown ? restoreLink(liveLink) : failLink(liveLink))}
+                        >
+                          {isDown ? "Restore" : "Cut Link"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </section>
 
         <section className="card full-width">

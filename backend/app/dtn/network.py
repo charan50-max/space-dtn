@@ -1,5 +1,5 @@
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from backend.app.dtn.node import Node
 
@@ -23,6 +23,12 @@ class Link:
     active: bool = True
     congestion: float = 0.0
     base_latency: Optional[int] = None
+    windows: Optional[List[Tuple[int, int]]] = None
+
+    def is_planned_up(self, tick: int) -> bool:
+        if self.windows is None:
+            return True
+        return any(start <= tick <= end for start, end in self.windows)
 
     def __post_init__(self):
         if self.base_latency is None:
@@ -93,6 +99,7 @@ class Link:
                 "active": self.active,
                 "status": self.link_status,
                 "effective_bandwidth": self.effective_bandwidth,
+                "windows": self.windows,
                 "min_latency": MIN_LATENCY,
                 "max_latency": MAX_LATENCY,
                 "max_congestion": MAX_CONGESTION,
@@ -104,6 +111,7 @@ class Link:
 class SpaceNetwork:
 
     def __init__(self):
+        self.clock: int = 0
         self.nodes: Dict[str, Node] = {}
         self.links: Dict[str, Link] = {}
         self._create_default_network()
@@ -180,8 +188,9 @@ class SpaceNetwork:
 
         for link in self.links.values():
             # Latency at MAX_LATENCY is the simulation's disruption state.
-            if not include_inactive and not link.active:
-                continue
+            if not include_inactive:
+                if not link.active or not link.is_planned_up(self.clock):
+                    continue
 
             if link.source == node_id:
                 neighbors.append((link.target, link))
@@ -272,6 +281,7 @@ class SpaceNetwork:
 
     def to_dict(self):
         return {
+            "clock": self.clock,
             "nodes": [node.to_dict() for node in self.nodes.values()],
             "links": [link.to_dict() for link in self.links.values()],
             "parameters": {

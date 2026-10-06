@@ -261,4 +261,13 @@ export async function checkBackend() {
   }
 }
 
+export async function getResilience(source = "GS-1", target = "GS-2") {
+  const simulationId = getSimulationId();
+  return request(
+    `/api/network/resilience?simulation_id=${encodeURIComponent(
+      simulationId
+    )}&source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`
+  );
+}
+
 export { API_URL };

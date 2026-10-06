@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Literal, Optional, List
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from backend.app.services.simulation_service import (
@@ -8,6 +8,7 @@ from backend.app.services.simulation_service import (
     comparison_service,
 )
 from backend.app.services.benchmark_service import (
+    SCENARIOS,
     ScoreBankUnavailable,
     benchmark_service,
 )
@@ -193,6 +194,11 @@ def compare_run():
 # random link outages / congestion bursts, repeated over many seeds.
 # Returns means, standard deviations and 95% confidence intervals.
 # ------------------------------------------------------------------
+@router.get("/compare/benchmark/scenarios")
+def get_benchmark_scenarios():
+    return SCENARIOS
+
+
 @router.get("/compare/benchmark")
 def compare_benchmark(
     seeds: int = Query(default=20, ge=1, le=200),
@@ -204,13 +210,16 @@ def compare_benchmark(
     buffer_capacity: int = Query(default=10, ge=2, le=100),
     ttl: int = Query(default=30, ge=5, le=200),
     include_runs: bool = False,
-    # Where priority scores come from: real TinyML outputs (default),
-    # a perfect oracle (upper bound) or random scores (lower bound).
     classifier: Literal["tinyml", "oracle", "random"] = "tinyml",
     urgent_fraction: float = Query(default=0.20, ge=0.01, le=0.9),
+    scenario: Optional[str] = Query(default=None),
+    arrival_process: Literal["burst", "poisson", "uniform"] = "burst",
+    multi_flow: bool = False,
+    spray_copies: int = Query(default=4, ge=1, le=16),
+    format: Literal["json", "csv"] = "json",
 ):
     try:
-        return benchmark_service.run(
+        result = benchmark_service.run(
             seeds=seeds,
             base_seed=base_seed,
             messages=messages,
@@ -219,7 +228,43 @@ def compare_benchmark(
             link_capacity=link_capacity,
             buffer_capacity=buffer_capacity,
             ttl=ttl,
-            include_runs=include_runs,
+            include_runs=include_runs or (format == "csv"),
+            classifier=classifier,
+            urgent_fraction=urgent_fraction,
+            scenario=scenario,
+            arrival_process=arrival_process,
+            multi_flow=multi_flow,
+            spray_copies=spray_copies,
+        )
+
+        if format == "csv":
+            csv_content = benchmark_service.to_csv(result)
+            return Response(
+                content=csv_content,
+                media_type="text/csv",
+                headers={
+                    "Content-Disposition": f"attachment; filename=dtn_benchmark_{scenario or 'standard'}.csv"
+                },
+            )
+
+        return result
+    except ScoreBankUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@router.get("/compare/benchmark/sweeps")
+def compare_benchmark_sweeps(
+    parameter: Literal["link_capacity", "buffer_capacity", "outages"] = "link_capacity",
+    seeds: int = Query(default=5, ge=1, le=20),
+    messages: int = Query(default=24, ge=6, le=100),
+    classifier: Literal["tinyml", "oracle", "random"] = "tinyml",
+    urgent_fraction: float = Query(default=0.20, ge=0.01, le=0.9),
+):
+    try:
+        return benchmark_service.run_sweep(
+            parameter=parameter,
+            seeds=seeds,
+            messages=messages,
             classifier=classifier,
             urgent_fraction=urgent_fraction,
         )

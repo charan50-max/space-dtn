@@ -120,6 +120,12 @@ class DTNSimulator:
         self._replica_count: Counter = Counter()
         self._distance_cache: Dict[str, Dict[str, float]] = {}
 
+        # Reliability features (Phase 5: Sequence numbers & Custody transfer)
+        self._source_seq_counters: Dict[str, int] = defaultdict(int)
+        self._received_seqs: Dict[str, List[int]] = defaultdict(list)
+        self.sequence_gaps: int = 0
+        self.custody_retransmissions: int = 0
+
     # --------------------------------------------------
     # MESSAGE CREATION
     # --------------------------------------------------
@@ -141,12 +147,21 @@ class DTNSimulator:
         compression: str = "none",
         encrypted: bool = False,
         true_urgent: Optional[bool] = None,
+        seq_no: Optional[int] = None,
     ):
         if message_id is None:
             message_id = f"MSG-{self.total_created + 1:04d}"
 
         if message_id in self.messages:
             return self.messages[message_id]
+
+        if seq_no is None:
+            self._source_seq_counters[source] += 1
+            seq_no = self._source_seq_counters[source]
+        else:
+            self._source_seq_counters[source] = max(
+                self._source_seq_counters[source], seq_no
+            )
 
         message = DTNMessage(
             id=message_id,
@@ -165,13 +180,14 @@ class DTNSimulator:
             compression=compression,
             encrypted=encrypted,
             true_urgent=true_urgent,
+            seq_no=seq_no,
         )
 
         self.messages[message.id] = message
         self.total_created += 1
 
         self._log(
-            f"{message.id} created: {source} → {destination} "
+            f"{message.id} [seq={seq_no}] created: {source} → {destination} "
             f"| priority={message.priority_score:.2f} "
             f"| class={message.priority_class}"
         )
@@ -405,6 +421,7 @@ class DTNSimulator:
             return self._step_opportunistic(return_snapshot)
 
         self.simulation_time += 1
+        self.network.clock = self.simulation_time
 
         self._release_duplicates()
 
@@ -566,9 +583,17 @@ class DTNSimulator:
                 ).startswith("reroute"):
                     message.last_decision = "forwarded"
 
+                # Custody transfer (Phase 5):
+                # Next node assumes custody upon receiving bundle into buffer
+                if message.queued_ticks > 0 or message.stored_ticks > 0:
+                    message.custody_retransmissions += 1
+                    self.custody_retransmissions += 1
+
+                message.custody_holder = next_node
+                message.custody_acked = (next_node == message.destination)
+
                 self._log(
-                    f"{message.id} forwarded "
-                    f"{previous_node} → {next_node}"
+                    f"{message.id} forwarded {previous_node} → {next_node} (custody={next_node})"
                 )
 
                 self._enforce_storage(next_node, active_messages, occupancy)
@@ -772,6 +797,7 @@ class DTNSimulator:
 
     def _step_opportunistic(self, return_snapshot: bool = True):
         self.simulation_time += 1
+        self.network.clock = self.simulation_time
 
         self._release_duplicates()
 
@@ -1011,12 +1037,27 @@ class DTNSimulator:
 
         message.status = "delivered"
         message.integrity_verified = True
+        message.custody_holder = message.destination
+        message.custody_acked = True
+
+        # Phase 5: Sequence number tracking & gap detection
+        if message.seq_no is not None:
+            received = self._received_seqs[message.source]
+            if received:
+                last_seq = received[-1]
+                if message.seq_no > last_seq + 1:
+                    gap = message.seq_no - (last_seq + 1)
+                    self.sequence_gaps += gap
+                    self._log(
+                        f"SEQUENCE GAP: {message.id} seq={message.seq_no} arrived after seq={last_seq} ({gap} missing)"
+                    )
+            received.append(message.seq_no)
 
         self.delivered_ids.add(message.bundle_id)
         self.total_delivered += 1
 
         self._log(
-            f"{message.id} delivered successfully"
+            f"{message.id} [seq={message.seq_no}] delivered successfully (custody acked)"
         )
 
     def replay_bundle(self, message_id: str) -> bool:
@@ -1551,6 +1592,9 @@ class DTNSimulator:
             "peak_buffer_occupancy": dict(self.peak_buffer),
             "buffer_blocked": self.buffer_blocked,
             "buffer_evictions": self.buffer_evictions,
+            # Reliability (Phase 5: Sequence numbers & custody transfer)
+            "custody_retransmissions": self.custody_retransmissions,
+            "sequence_gaps": self.sequence_gaps,
             # Resilience
             "disruption_ticks": self.disruption_ticks,
             "delivered_after_storage": delivered_after_storage,
