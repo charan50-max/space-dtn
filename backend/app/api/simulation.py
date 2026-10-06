@@ -1,11 +1,16 @@
-from fastapi import APIRouter, Query
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from backend.app.services.simulation_service import (
     simulation_service,
     comparison_service,
 )
-from backend.app.services.benchmark_service import benchmark_service
+from backend.app.services.benchmark_service import (
+    ScoreBankUnavailable,
+    benchmark_service,
+)
 
 
 router = APIRouter(
@@ -199,8 +204,44 @@ def compare_benchmark(
     buffer_capacity: int = Query(default=10, ge=2, le=100),
     ttl: int = Query(default=30, ge=5, le=200),
     include_runs: bool = False,
+    # Where priority scores come from: real TinyML outputs (default),
+    # a perfect oracle (upper bound) or random scores (lower bound).
+    classifier: Literal["tinyml", "oracle", "random"] = "tinyml",
+    urgent_fraction: float = Query(default=0.20, ge=0.01, le=0.9),
 ):
-    return benchmark_service.run(
+    try:
+        return benchmark_service.run(
+            seeds=seeds,
+            base_seed=base_seed,
+            messages=messages,
+            outages=outages,
+            congestion_events=congestion_events,
+            link_capacity=link_capacity,
+            buffer_capacity=buffer_capacity,
+            ttl=ttl,
+            include_runs=include_runs,
+            classifier=classifier,
+            urgent_fraction=urgent_fraction,
+        )
+    except ScoreBankUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+# Same benchmark once per priority source (tinyml / oracle / random),
+# reporting only what priority scheduling changes (adaptive vs reroute).
+@router.get("/compare/benchmark/priority-sources")
+def compare_priority_sources(
+    seeds: int = Query(default=20, ge=1, le=100),
+    base_seed: int = Query(default=1, ge=0),
+    messages: int = Query(default=36, ge=6, le=300),
+    outages: int = Query(default=4, ge=0, le=12),
+    congestion_events: int = Query(default=3, ge=0, le=12),
+    link_capacity: int = Query(default=2, ge=1, le=20),
+    buffer_capacity: int = Query(default=10, ge=2, le=100),
+    ttl: int = Query(default=30, ge=5, le=200),
+    urgent_fraction: float = Query(default=0.20, ge=0.01, le=0.9),
+):
+    return benchmark_service.run_priority_sources(
         seeds=seeds,
         base_seed=base_seed,
         messages=messages,
@@ -209,5 +250,5 @@ def compare_benchmark(
         link_capacity=link_capacity,
         buffer_capacity=buffer_capacity,
         ttl=ttl,
-        include_runs=include_runs,
+        urgent_fraction=urgent_fraction,
     )

@@ -55,6 +55,42 @@ FEATURES = [
 ]
 
 
+# Field names a packet in traffic_cycle.json might use for its urgency label
+# (the dataset's anomaly-derived urgency proxy). The first one present with a
+# boolean-like value is used; if none is present the label is None and
+# metrics fall back to the predicted priority class.
+LABEL_KEYS = (
+    "true_urgent",
+    "is_urgent",
+    "urgent",
+    "urgency_label",
+    "label",
+    "target",
+)
+
+
+def _packet_label(packet: Dict[str, Any]):
+    """Return the packet's urgency label as a bool, or None if absent."""
+    for key in LABEL_KEYS:
+        if key not in packet:
+            continue
+
+        value = packet[key]
+
+        if isinstance(value, bool):
+            return value
+
+        if isinstance(value, (int, float)) and value in (0, 1):
+            return bool(value)
+
+        if isinstance(value, str) and value.strip().lower() in (
+            "0", "1", "true", "false",
+        ):
+            return value.strip().lower() in ("1", "true")
+
+    return None
+
+
 class TrafficService:
 
     @staticmethod
@@ -128,6 +164,7 @@ class TrafficService:
                 ttl=int(packet.get("ttl", 30)),
                 message_id=packet["id"],
                 telemetry=telemetry,
+                true_urgent=_packet_label(packet),
             )
 
             created.append(message)
@@ -154,6 +191,7 @@ class TrafficService:
                 ttl=int(template.get("ttl", 40)),
                 message_id=f"MSG-X{index + 1:03d}",
                 telemetry=telemetry,
+                true_urgent=_packet_label(template),
             )
             created.append(extra)
 
@@ -190,12 +228,25 @@ class TrafficService:
             f"| TinyML={priority_service.status()['model_type']}"
         )
 
+        labelled = sum(1 for m in created if m.true_urgent is not None)
+
+        simulator._log(
+            f"URGENCY LABELS: {labelled}/{len(created)} packets carry a "
+            "dataset label"
+            + (
+                ""
+                if labelled
+                else " (metrics use the predicted priority class)"
+            )
+        )
+
         snapshot = simulator.snapshot()
 
         return {
             "success": True,
             "simulation_id": simulation_id,
             "created": len(created),
+            "urgency_labels_found": labelled,
             "duplicates_planned": len(duplicated),
             "corruptions_planned": len(corrupted),
             "source_packet_count": len(data.get("packets", [])),

@@ -1,3 +1,4 @@
+import heapq
 from collections import Counter, defaultdict
 from typing import Dict, List, Optional
 
@@ -14,6 +15,12 @@ class DTNSimulator:
     reroute  : FIFO scheduling          + live, disruption-aware routing
     baseline : FIFO scheduling          + static contact-plan routing
 
+    Two opportunistic (replication) baselines share the same links, buffers
+    and capacities, so their extra cost shows up as overhead:
+
+    spray    : binary spray-and-wait with L copies per bundle
+    epidemic : flood a copy to every neighbour that does not hold one
+
     `reroute` exists to separate the two effects: baseline -> reroute shows
     what adaptive ROUTING buys, reroute -> adaptive shows what PRIORITY buys.
 
@@ -25,12 +32,17 @@ class DTNSimulator:
         room; the other strategies simply make the sender wait.
     """
 
-    MODES = ("adaptive", "reroute", "baseline")
+    MODES = ("adaptive", "reroute", "baseline", "spray", "epidemic")
+
+    # Strategies that replicate bundles instead of routing a single copy.
+    OPPORTUNISTIC = ("spray", "epidemic")
 
     STRATEGY_LABELS = {
         "adaptive": "TinyML priority + live adaptive routing",
         "reroute": "FIFO + live adaptive routing",
         "baseline": "FIFO + static contact-plan routing",
+        "spray": "Spray-and-wait (binary, hop-distance focus)",
+        "epidemic": "Epidemic flooding",
     }
 
     # The TinyML pipeline emits HIGH / LOW; the heuristic fallback can also
@@ -55,6 +67,7 @@ class DTNSimulator:
         link_capacity: int = 2,
         contact_plan: Optional[List[str]] = None,
         buffer_capacity: Optional[int] = None,
+        spray_copies: int = 4,
     ):
         if mode not in self.MODES:
             raise ValueError(f"mode must be one of {self.MODES}")
@@ -63,6 +76,7 @@ class DTNSimulator:
         self.link_capacity = link_capacity
         self.contact_plan = contact_plan
         self.buffer_capacity = buffer_capacity
+        self.spray_copies = max(1, int(spray_copies))
 
         self.network = SpaceNetwork()
 
@@ -99,6 +113,13 @@ class DTNSimulator:
         self.buffer_blocked = 0
         self.buffer_evictions = 0
 
+        # Cost accounting (every hop of every copy is one transmission).
+        self.transmissions = 0
+        self.replicas_created = 0
+        self.replicas_purged = 0
+        self._replica_count: Counter = Counter()
+        self._distance_cache: Dict[str, Dict[str, float]] = {}
+
     # --------------------------------------------------
     # MESSAGE CREATION
     # --------------------------------------------------
@@ -119,6 +140,7 @@ class DTNSimulator:
         priority_model: Optional[str] = None,
         compression: str = "none",
         encrypted: bool = False,
+        true_urgent: Optional[bool] = None,
     ):
         if message_id is None:
             message_id = f"MSG-{self.total_created + 1:04d}"
@@ -142,6 +164,7 @@ class DTNSimulator:
             created_at=self.simulation_time,
             compression=compression,
             encrypted=encrypted,
+            true_urgent=true_urgent,
         )
 
         self.messages[message.id] = message
@@ -377,7 +400,10 @@ class DTNSimulator:
     # SIMULATION STEP
     # --------------------------------------------------
 
-    def step(self):
+    def step(self, return_snapshot: bool = True):
+        if self.mode in self.OPPORTUNISTIC:
+            return self._step_opportunistic(return_snapshot)
+
         self.simulation_time += 1
 
         self._release_duplicates()
@@ -522,6 +548,8 @@ class DTNSimulator:
                     link_usage[link_key] = link_usage.get(link_key, 0) + 1
                     message.path_latency += link.latency
 
+                self.transmissions += 1
+
                 occupancy[previous_node] -= 1
                 occupancy[next_node] += 1
 
@@ -551,7 +579,370 @@ class DTNSimulator:
 
         self._record_tick(active_messages, link_usage)
 
-        return self.snapshot()
+        return self.snapshot() if return_snapshot else None
+
+    # --------------------------------------------------
+    # OPPORTUNISTIC STRATEGIES (spray-and-wait, epidemic)
+    # --------------------------------------------------
+
+    def _static_distance(self, node_id: str, destination: str) -> float:
+        """Shortest base-latency distance on the published topology."""
+        table = self._distance_cache.get(destination)
+
+        if table is None:
+            table = {destination: 0.0}
+            queue = [(0.0, destination)]
+
+            while queue:
+                dist, current = heapq.heappop(queue)
+
+                if dist > table.get(current, float("inf")):
+                    continue
+
+                for neighbor, link in self.network.get_neighbors(
+                    current, include_inactive=True
+                ):
+                    cost = dist + (link.base_latency or link.latency)
+
+                    if cost < table.get(neighbor, float("inf")):
+                        table[neighbor] = cost
+                        heapq.heappush(queue, (cost, neighbor))
+
+            self._distance_cache[destination] = table
+
+        return table.get(node_id, float("inf"))
+
+    def _spawn_replica(
+        self,
+        parent: DTNMessage,
+        node_id: str,
+        link,
+        copies: int,
+    ) -> DTNMessage:
+        """
+        Create a replica of `parent` at `node_id`. Replicas keep the
+        original's created_at, so their delay is the bundle's delay.
+        """
+        bundle = parent.bundle_id
+        self._replica_count[bundle] += 1
+        index = self._replica_count[bundle]
+
+        replica = DTNMessage(
+            id=f"{bundle}-R{index}",
+            source=parent.source,
+            destination=parent.destination,
+            payload=parent.clean_payload(),
+            priority_score=parent.priority_score,
+            priority_class=parent.priority_class,
+            priority_probability=parent.priority_probability,
+            priority_confidence=parent.priority_confidence,
+            priority_threshold=parent.priority_threshold,
+            priority_model=parent.priority_model,
+            telemetry=dict(parent.telemetry),
+            ttl=parent.ttl,
+            created_at=parent.created_at,
+            current_node=node_id,
+            status="in_transit",
+            hops=parent.hops + 1,
+            path_latency=parent.path_latency + link.latency,
+            compression=parent.compression,
+            encrypted=parent.encrypted,
+            bundle_id=bundle,
+            copy_of=bundle,
+            route=list(parent.route) + [node_id],
+            true_urgent=parent.true_urgent,
+            copies_left=copies,
+        )
+        replica.delay = self.simulation_time - replica.created_at
+
+        self.messages[replica.id] = replica
+        self.replicas_created += 1
+
+        return replica
+
+    def _evict_redundant(
+        self,
+        node_id: str,
+        incoming: DTNMessage,
+        pool: List[DTNMessage],
+        occupancy: Counter,
+        alive: Counter,
+    ) -> bool:
+        """
+        Buffer policy for the replicating strategies: make room by dropping
+        a copy of the MOST widely replicated other bundle held here. The
+        last copy of a bundle is never dropped. Without some policy like
+        this, flooding simply gridlocks, which would be a strawman.
+        """
+        residents = [
+            other
+            for other in pool
+            if other.current_node == node_id
+            and other.status not in self.TERMINAL
+            and other.bundle_id != incoming.bundle_id
+            and alive[other.bundle_id] >= 2
+        ]
+
+        if not residents:
+            return False
+
+        victim = max(
+            residents,
+            key=lambda other: (alive[other.bundle_id], other.id),
+        )
+
+        victim.status = "rejected"
+        victim.reject_reason = "buffer_evicted"
+        occupancy[node_id] -= 1
+        alive[victim.bundle_id] -= 1
+        self.buffer_evictions += 1
+
+        self._log(
+            f"{victim.id} evicted at {node_id} (redundant copy) "
+            f"to make room for {incoming.id}"
+        )
+
+        return True
+
+    def _opportunistic_actions(self, message: DTNMessage, held: set):
+        """
+        What this copy wants to do this tick, as (neighbor, link, kind)
+        with kind in {"copy", "spray", "move"}.
+        """
+        destination = message.destination
+
+        candidates = {}
+
+        for neighbor, link in self.network.get_neighbors(
+            message.current_node
+        ):
+            if neighbor in held and neighbor != destination:
+                continue
+
+            best = candidates.get(neighbor)
+
+            if best is None or link.latency < best.latency:
+                candidates[neighbor] = link
+
+        if not candidates:
+            return []
+
+        by_latency = sorted(
+            candidates.items(), key=lambda item: (item[1].latency, item[0])
+        )
+
+        if self.mode == "epidemic":
+            ordered = sorted(
+                by_latency, key=lambda item: item[0] != destination
+            )
+            return [(n, link, "copy") for n, link in ordered]
+
+        # Spray-and-wait.
+        if destination in candidates:
+            return [(destination, candidates[destination], "copy")]
+
+        def rank(item):
+            neighbor, link = item
+            return (
+                self._static_distance(neighbor, destination),
+                link.latency,
+                neighbor,
+            )
+
+        tokens = message.copies_left or 1
+
+        if tokens > 1:
+            neighbor, link = min(by_latency, key=rank)
+            return [(neighbor, link, "spray")]
+
+        # Single copy left: focus phase. Move toward the destination, only
+        # to a node strictly closer on the published topology.
+        here = self._static_distance(message.current_node, destination)
+        closer = [
+            item
+            for item in by_latency
+            if self._static_distance(item[0], destination) < here
+        ]
+
+        if not closer:
+            return []
+
+        neighbor, link = min(closer, key=rank)
+        return [(neighbor, link, "move")]
+
+    def _step_opportunistic(self, return_snapshot: bool = True):
+        self.simulation_time += 1
+
+        self._release_duplicates()
+
+        link_usage: Dict[str, int] = {}
+
+        active_messages = [
+            message
+            for message in self.messages.values()
+            if message.status not in self.TERMINAL
+        ]
+
+        active_messages.sort(key=self._sort_key)
+
+        occupancy: Counter = Counter(
+            message.current_node for message in active_messages
+        )
+
+        holders: Dict[str, set] = defaultdict(set)
+
+        for message in active_messages:
+            holders[message.bundle_id].add(message.current_node)
+
+        if active_messages:
+            self.busy_ticks += 1
+
+            if any(not link.active for link in self.network.links.values()):
+                self.disruption_ticks += 1
+
+        spawned: List[DTNMessage] = []
+
+        # Live copies per bundle. Buffer management never drops the last
+        # copy of a bundle to make room.
+        alive: Counter = Counter(
+            message.bundle_id for message in active_messages
+        )
+
+        for message in active_messages:
+            if message.status in self.TERMINAL:
+                continue
+
+            message.delay = self.simulation_time - message.created_at
+
+            # The bundle already arrived: remaining copies are purged
+            # (an idealised, instant delivery acknowledgement, which is
+            # generous to the flooding strategies).
+            if message.bundle_id in self.delivered_ids:
+                message.status = "rejected"
+                message.reject_reason = "purged"
+                occupancy[message.current_node] -= 1
+                alive[message.bundle_id] -= 1
+                self.replicas_purged += 1
+                continue
+
+            if message.delay > message.ttl:
+                occupancy[message.current_node] -= 1
+                alive[message.bundle_id] -= 1
+
+                if message.copy_of:
+                    message.status = "rejected"
+                    message.reject_reason = "expired"
+                else:
+                    message.status = "dropped"
+                    message.reject_reason = "ttl"
+                    self.total_dropped += 1
+                    self._log(f"{message.id} dropped: TTL expired")
+
+                continue
+
+            if message.current_node == message.destination:
+                self._deliver(message)
+                occupancy[message.destination] -= 1
+                continue
+
+            if message.copies_left is None:
+                message.copies_left = (
+                    self.spray_copies if self.mode == "spray" else 1
+                )
+
+            actions = self._opportunistic_actions(
+                message, holders[message.bundle_id]
+            )
+
+            progressed = False
+            blocked = False
+
+            for neighbor, link, kind in actions:
+                slots = self._slot_capacity(link)
+
+                if link_usage.get(link.id, 0) >= slots:
+                    blocked = True
+                    continue
+
+                if (
+                    neighbor != message.destination
+                    and occupancy[neighbor] >= self._capacity_of(neighbor)
+                    and not self._evict_redundant(
+                        neighbor,
+                        message,
+                        active_messages + spawned,
+                        occupancy,
+                        alive,
+                    )
+                ):
+                    blocked = True
+                    self.buffer_blocked += 1
+                    continue
+
+                link_usage[link.id] = link_usage.get(link.id, 0) + 1
+                self.transmissions += 1
+                progressed = True
+
+                if kind == "move":
+                    previous = message.current_node
+                    occupancy[previous] -= 1
+                    occupancy[neighbor] += 1
+                    message.path_latency += link.latency
+                    message.current_node = neighbor
+                    message.route.append(neighbor)
+                    message.hops += 1
+                    message.status = "in_transit"
+                    holders[message.bundle_id].add(neighbor)
+
+                    self._log(
+                        f"{message.id} forwarded {previous} → {neighbor}"
+                    )
+
+                    if neighbor == message.destination:
+                        self._deliver(message)
+                        occupancy[message.destination] -= 1
+
+                    break
+
+                if kind == "spray":
+                    give = (message.copies_left or 1) // 2
+                    message.copies_left = (message.copies_left or 1) - give
+                else:
+                    give = 1
+
+                replica = self._spawn_replica(message, neighbor, link, give)
+                spawned.append(replica)
+                alive[message.bundle_id] += 1
+                holders[message.bundle_id].add(neighbor)
+
+                self._log(
+                    f"{message.id} replicated "
+                    f"{message.current_node} → {neighbor} ({replica.id})"
+                )
+
+                if neighbor == message.destination:
+                    self._deliver(replica)
+                else:
+                    occupancy[neighbor] += 1
+
+                if kind == "spray":
+                    break
+
+            if message.status in self.TERMINAL:
+                continue
+
+            if progressed:
+                message.status = "in_transit"
+            elif blocked:
+                message.status = "queued"
+                message.queued_ticks += 1
+            else:
+                message.status = "stored"
+                message.stored_ticks += 1
+
+        self._record_tick(active_messages + spawned, link_usage)
+
+        return self.snapshot() if return_snapshot else None
 
     def _record_tick(
         self,
@@ -731,6 +1122,7 @@ class DTNSimulator:
             encrypted=original.encrypted,
             bundle_id=original.bundle_id,
             copy_of=original.bundle_id,
+            true_urgent=original.true_urgent,
         )
 
         self.messages[copy.id] = copy
@@ -865,13 +1257,37 @@ class DTNSimulator:
     # METRICS
     # --------------------------------------------------
 
+    def _is_urgent(self, message: DTNMessage) -> bool:
+        """
+        Urgency used for SCORING (never for scheduling).
+
+        The dataset label wins when present. Otherwise the predicted class
+        is used, which is what the simulator did before labels existed.
+        """
+        if message.true_urgent is not None:
+            return bool(message.true_urgent)
+
+        return message.priority_class in self.URGENT_CLASSES
+
+    def _is_predicted_urgent(self, message: DTNMessage) -> bool:
+        return message.priority_class in self.URGENT_CLASSES
+
     @staticmethod
     def _mean(values) -> float:
         values = list(values)
         return sum(values) / len(values) if values else 0.0
 
-    def _class_breakdown(self, originals: List[DTNMessage]) -> dict:
-        """Delivery and delay per priority class (originals only)."""
+    def _class_breakdown(
+        self,
+        originals: List[DTNMessage],
+        delivered_by_bundle: Dict[str, DTNMessage],
+    ) -> dict:
+        """
+        Delivery and delay per priority class (originals only).
+
+        A bundle counts as delivered when ANY of its copies arrived, and its
+        delay is that copy's delay (which matters for replicating strategies).
+        """
         groups: Dict[str, List[DTNMessage]] = defaultdict(list)
 
         for message in originals:
@@ -880,13 +1296,22 @@ class DTNSimulator:
         breakdown = {}
 
         for priority_class, members in sorted(groups.items()):
-            delivered = [m for m in members if m.status == "delivered"]
+            delivered = [
+                delivered_by_bundle[m.bundle_id]
+                for m in members
+                if m.bundle_id in delivered_by_bundle
+            ]
             delays = [m.delay for m in delivered]
 
             breakdown[priority_class] = {
                 "total": len(members),
                 "delivered": len(delivered),
-                "dropped": sum(1 for m in members if m.status == "dropped"),
+                "dropped": sum(
+                    1
+                    for m in members
+                    if m.status == "dropped"
+                    and m.bundle_id not in delivered_by_bundle
+                ),
                 "delivery_rate": round(
                     len(delivered) / len(members) * 100, 2
                 ),
@@ -975,11 +1400,28 @@ class DTNSimulator:
             m.path_latency for m in delivered_messages
         )
 
+        # Predicted urgency: what the priority engine decided.
         high_priority = sum(
             1
             for message in originals
-            if message.priority_class in self.URGENT_CLASSES
+            if self._is_predicted_urgent(message)
         )
+
+        # Scored urgency: the dataset label when available.
+        urgent_total = sum(
+            1 for message in originals if self._is_urgent(message)
+        )
+
+        labelled = sum(
+            1 for message in originals if message.true_urgent is not None
+        )
+
+        if not originals or labelled == 0:
+            urgent_label_source = "predicted_class"
+        elif labelled == len(originals):
+            urgent_label_source = "dataset_label"
+        else:
+            urgent_label_source = "mixed"
 
         stored_messages = sum(
             1
@@ -987,16 +1429,28 @@ class DTNSimulator:
             if message.status == "stored"
         )
 
-        # priority_class is ground truth for SCORING. The non-adaptive
-        # strategies ignore it when scheduling, so the comparison is fair.
+        # Urgency is used for SCORING only. The non-adaptive strategies
+        # ignore priority when scheduling, so the comparison is fair.
+        # Exactly one message per bundle is ever delivered (the rest are
+        # rejected as duplicates or purged), so there is no double counting.
         urgent_delivered_messages = [
             message
             for message in delivered_messages
-            if message.priority_class in self.URGENT_CLASSES
+            if self._is_urgent(message)
         ]
 
         urgent_avg_delay = self._mean(
             m.delay for m in urgent_delivered_messages
+        )
+
+        predicted_urgent_delivered_messages = [
+            message
+            for message in delivered_messages
+            if self._is_predicted_urgent(message)
+        ]
+
+        predicted_urgent_avg_delay = self._mean(
+            m.delay for m in predicted_urgent_delivered_messages
         )
 
         # Resilience: bundles that rode out an outage in storage and
@@ -1039,14 +1493,31 @@ class DTNSimulator:
                 for message in originals
                 if message.priority_class == "CRITICAL"
             ),
+            # Scored urgency (dataset label when available).
+            "urgent_label_source": urgent_label_source,
+            "urgent_total": urgent_total,
             "urgent_delivered": len(urgent_delivered_messages),
             "urgent_delivery_rate": round(
-                len(urgent_delivered_messages) / high_priority * 100
-                if high_priority
+                len(urgent_delivered_messages) / urgent_total * 100
+                if urgent_total
                 else 0.0,
                 2,
             ),
             "urgent_avg_delay": round(urgent_avg_delay, 2),
+            # Predicted urgency (what the priority engine flagged).
+            "predicted_urgent_total": high_priority,
+            "predicted_urgent_delivered": len(
+                predicted_urgent_delivered_messages
+            ),
+            "predicted_urgent_delivery_rate": round(
+                len(predicted_urgent_delivered_messages) / high_priority * 100
+                if high_priority
+                else 0.0,
+                2,
+            ),
+            "predicted_urgent_avg_delay": round(
+                predicted_urgent_avg_delay, 2
+            ),
             "duplicates": self.total_duplicates,
             "copies_sent": len(self.messages) - total,
             "pending_duplicates": len(self.scheduled_duplicates),
@@ -1063,7 +1534,17 @@ class DTNSimulator:
             "average_delay": round(average_delay, 2),
             "average_hops": round(average_hops, 2),
             "average_path_latency_ms": round(average_path_latency, 2),
-            "class_breakdown": self._class_breakdown(originals),
+            "class_breakdown": self._class_breakdown(
+                originals,
+                {m.bundle_id: m for m in delivered_messages},
+            ),
+            # Cost: every hop of every copy is one transmission
+            "transmissions": self.transmissions,
+            "overhead_ratio": round(
+                self.transmissions / delivered if delivered else 0.0, 2
+            ),
+            "replicas_created": self.replicas_created,
+            "replicas_purged": self.replicas_purged,
             # Link utilization
             **utilization,
             # Buffers / store-and-forward
@@ -1118,5 +1599,6 @@ class DTNSimulator:
             self.link_capacity,
             self.contact_plan,
             self.buffer_capacity,
+            self.spray_copies,
         )
         return self.snapshot()

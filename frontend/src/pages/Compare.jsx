@@ -21,7 +21,18 @@ async function request(path, method = "GET") {
   const response = await fetch(`${COMPARE_URL}${path}`, { method });
 
   if (!response.ok) {
-    throw new Error(`Request failed (${response.status}) for ${path}`);
+    let detail = "";
+
+    try {
+      const body = await response.json();
+      detail = typeof body.detail === "string" ? body.detail : "";
+    } catch {
+      // Body was not JSON; fall back to the status line below.
+    }
+
+    throw new Error(
+      detail || `Request failed (${response.status}) for ${path}`
+    );
   }
 
   return response.json();
@@ -443,7 +454,16 @@ const STRATEGIES = [
   ["baseline", "Baseline"],
   ["reroute", "FIFO + live routing"],
   ["adaptive", "Space DTN"],
+  ["spray", "Spray-and-wait"],
+  ["epidemic", "Epidemic flooding"],
 ];
+
+// Bar colours for the replication strategies (the original three have their
+// own cmp-fill-* classes).
+const EXTRA_FILL = {
+  spray: "#b794f4",
+  epidemic: "#f6ad55",
+};
 
 const signed = (value) => {
   if (value === null || value === undefined) return "—";
@@ -643,9 +663,12 @@ const BENCH_ROWS = [
   ["average_delay", "Average delay (ticks)"],
   ["delivery_rate", "Delivery rate (%)"],
   ["urgent_delivery_rate", "Urgent delivery rate (%)"],
+  ["predicted_urgent_avg_delay", "Flagged-urgent delay (ticks)"],
   ["link_utilization", "Link utilization (%)"],
   ["average_path_latency_ms", "Path latency (sim-ms)"],
   ["dropped", "Messages dropped"],
+  ["overhead_ratio", "Transmissions per delivered bundle"],
+  ["transmissions", "Total transmissions"],
   ["buffer_blocked", "Sends blocked by full buffers"],
   ["buffer_evictions", "Low-priority evictions"],
   ["delivered_after_storage", "Delivered after waiting in storage"],
@@ -706,6 +729,31 @@ function benchmarkFindings(result) {
     );
   }
 
+  const sp = result.improvement.adaptive_vs_spray;
+  const ep = result.improvement.adaptive_vs_epidemic;
+  const sum = result.summary;
+
+  if (sp && sum.spray?.overhead_ratio?.mean != null) {
+    lines.push(
+      `Against spray-and-wait (${result.config.spray_copies} copies per bundle): ` +
+        `delivery rate ${sum.spray.delivery_rate.mean}% vs ${sum.adaptive.delivery_rate.mean}% for Space DTN, ` +
+        `but ${sum.spray.overhead_ratio.mean} transmissions per delivered bundle vs ${sum.adaptive.overhead_ratio.mean}` +
+        (sp.overhead_reduction_pct != null
+          ? ` (${sp.overhead_reduction_pct}% less network cost).`
+          : ".")
+    );
+  }
+
+  if (ep && sum.epidemic?.overhead_ratio?.mean != null) {
+    lines.push(
+      `Against epidemic flooding: delivery rate ${sum.epidemic.delivery_rate.mean}% vs ${sum.adaptive.delivery_rate.mean}%, ` +
+        `with ${sum.epidemic.overhead_ratio.mean} transmissions per delivered bundle vs ${sum.adaptive.overhead_ratio.mean}` +
+        (ep.overhead_reduction_pct != null
+          ? ` (${ep.overhead_reduction_pct}% less network cost).`
+          : ".")
+    );
+  }
+
   return lines;
 }
 
@@ -714,14 +762,54 @@ function Benchmark() {
     seeds: 20,
     messages: 36,
     buffer_capacity: 10,
+    classifier: "tinyml",
   });
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [sources, setSources] = useState(null);
+  const [sourcesBusy, setSourcesBusy] = useState(false);
+  const [sourcesError, setSourcesError] = useState("");
+  const [modelStatus, setModelStatus] = useState(null);
+
+  // Show a banner if the TinyML model is not loaded and the heuristic
+  // fallback is in use, so a fallback run is never mistaken for TinyML.
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch(`${API_BASE}/api/ml/status`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled) setModelStatus(data);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function change(event) {
     const { name, value } = event.target;
-    setParams((current) => ({ ...current, [name]: Number(value) }));
+    setParams((current) => ({
+      ...current,
+      [name]: name === "classifier" ? value : Number(value),
+    }));
+  }
+
+  async function compareSources() {
+    try {
+      setSourcesBusy(true);
+      setSourcesError("");
+      const { classifier, ...rest } = params;
+      const query = new URLSearchParams(rest).toString();
+      setSources(await request(`/benchmark/priority-sources?${query}`, "GET"));
+    } catch (err) {
+      console.error(err);
+      setSourcesError(err.message || "Priority source comparison failed.");
+    } finally {
+      setSourcesBusy(false);
+    }
   }
 
   async function run() {
@@ -789,6 +877,19 @@ function Benchmark() {
           </label>
 
           <label>
+            <span>Priority source</span>
+            <select
+              name="classifier"
+              value={params.classifier}
+              onChange={change}
+            >
+              <option value="tinyml">TinyML model (realistic)</option>
+              <option value="oracle">Perfect classifier (upper bound)</option>
+              <option value="random">Random scores (lower bound)</option>
+            </select>
+          </label>
+
+          <label>
             <span>Relay buffer size</span>
             <select
               name="buffer_capacity"
@@ -800,6 +901,15 @@ function Benchmark() {
             </select>
           </label>
         </div>
+
+        {modelStatus?.fallback_active && (
+          <div className="cmp-error">
+            TinyML model is not loaded, so live traffic uses the heuristic
+            fallback. The benchmark's TinyML source uses a precomputed score
+            bank instead and is not affected.
+            {modelStatus.model_error ? ` (${modelStatus.model_error})` : ""}
+          </div>
+        )}
 
         {error && <div className="cmp-error">{error}</div>}
 
@@ -818,6 +928,19 @@ function Benchmark() {
               {result.config.congestion_events_per_run} congestion bursts per
               run · link capacity {result.config.link_capacity} · relay buffer{" "}
               {result.config.buffer_capacity}
+            </div>
+
+            <div className="cmp-note">
+              Priority source: <strong>{result.config.classifier}</strong>
+              {result.config.classifier === "tinyml" && result.config.bank
+                ? ` (${result.config.model_type}, threshold ${result.config.threshold}; bank of ${result.config.bank.rows} test rows, precision ${result.config.bank.precision}, recall ${result.config.bank.recall})`
+                : result.config.classifier === "oracle"
+                ? " (a perfect classifier: an upper bound, not the real model)"
+                : " (scores carry no information: a lower bound)"}
+              . Urgent = {result.config.urgency_label}
+              {result.config.classifier === "tinyml"
+                ? ", a proxy for urgency, not real mission urgency."
+                : "."}
             </div>
 
             <div className="table-wrapper">
@@ -868,6 +991,9 @@ function Benchmark() {
                                 width: `${
                                   value == null ? 0 : (value / maxDelay) * 100
                                 }%`,
+                                ...(EXTRA_FILL[key]
+                                  ? { background: EXTRA_FILL[key] }
+                                  : {}),
                               }}
                             />
                           </div>
@@ -880,11 +1006,97 @@ function Benchmark() {
               </div>
             )}
 
+            <div className="cmp-note">
+              Spray-and-wait and epidemic flooding replicate bundles. Here
+              they share the same links, buffers and capacities, evict
+              redundant copies when a buffer fills, and get an instant
+              delivery acknowledgement that purges leftover copies, which is
+              generous to them. Spray-and-wait is adapted to a fixed
+              topology: copies are sprayed toward the destination, and the
+              last copy only moves to a node closer to it.
+            </div>
+
             <ul className="cmp-findings">
               {benchmarkFindings(result).map((line) => (
                 <li key={line}>{line}</li>
               ))}
             </ul>
+
+            <div className="cmp-note">
+              How much does the priority source matter? This runs the same
+              benchmark with each source and shows only what priority
+              scheduling changes (adaptive vs. FIFO, both with live routing).
+              <div style={{ marginTop: 8 }}>
+                <button
+                  className="secondary-button"
+                  onClick={compareSources}
+                  disabled={sourcesBusy}
+                >
+                  {sourcesBusy ? "Running…" : "Compare priority sources"}
+                </button>
+              </div>
+            </div>
+
+            {sourcesError && <div className="cmp-error">{sourcesError}</div>}
+
+            {sources && (
+              <div className="table-wrapper">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Priority source</th>
+                      <th>Urgent delay: FIFO</th>
+                      <th>Urgent delay: priority</th>
+                      <th>Urgent delay saved</th>
+                      <th>Routine delay cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sources.classifiers.map((name) => {
+                      const item = sources.sources[name];
+
+                      if (!item || !item.available) {
+                        return (
+                          <tr key={name}>
+                            <td>{name}</td>
+                            <td colSpan={4}>{item?.error || "Unavailable"}</td>
+                          </tr>
+                        );
+                      }
+
+                      const low = (mode) => item[mode].routine_avg_delay;
+                      const cost =
+                        low("adaptive") != null && low("reroute") != null
+                          ? signed(
+                              Math.round(
+                                (low("adaptive") - low("reroute")) * 100
+                              ) / 100
+                            )
+                          : "—";
+
+                      return (
+                        <tr key={name}>
+                          <td>
+                            {name === "tinyml" ? <strong>{name}</strong> : name}
+                          </td>
+                          <td>{plusMinus(item.reroute.urgent_avg_delay)}</td>
+                          <td>{plusMinus(item.adaptive.urgent_avg_delay)}</td>
+                          <td>
+                            {item.adaptive_vs_reroute.urgent_delay_saved_ticks ??
+                              "—"}{" "}
+                            ticks (
+                            {item.adaptive_vs_reroute
+                              .urgent_delay_reduction_pct ?? "—"}
+                            %)
+                          </td>
+                          <td>{cost} ticks</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {result.config.buffer_capacity <= 4 && (
               <div className="cmp-note">

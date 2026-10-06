@@ -118,6 +118,10 @@ def ml_status():
 
     status["model_format"] = "TensorFlow Lite"
 
+    # True when predictions come from the heuristic instead of the model.
+    # The UI shows a banner so a fallback run is never mistaken for TinyML.
+    status["fallback_active"] = not bool(status.get("model_loaded"))
+
     status["feature_count"] = len(
         status.get("features", [])
     )

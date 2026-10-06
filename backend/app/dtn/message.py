@@ -64,6 +64,16 @@ class DTNMessage:
     last_decision: Optional[str] = None
     reroute_seq: int = 0
 
+    # Urgency label from the dataset (an anomaly-derived urgency PROXY, not
+    # real mission urgency). It is used only to SCORE the strategies; the
+    # scheduler and router never read it. None means "no label available",
+    # in which case metrics fall back to the predicted priority_class.
+    true_urgent: Optional[bool] = None
+
+    # Spray-and-wait token count (replication budget carried by this copy).
+    # None for the non-opportunistic strategies.
+    copies_left: Optional[int] = None
+
     TAMPER_SUFFIX = " [corrupted in transit]"
 
     def __post_init__(self):
