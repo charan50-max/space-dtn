@@ -1,277 +1,202 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import MetricCard from "../components/MetricCard";
 import NetworkGraph from "../components/NetworkGraph";
-import StatusBadge from "../components/StatusBadge";
+import { EventTimeline, MetricStrip, PageHeader, SignatureFlow } from "../components/mission/ui";
+import { getMLStatus, getNetwork } from "../services/api";
+import { countNodes } from "../lib/network.js";
+import { fmt, na, pct, urgencyPct } from "../lib/values.js";
+import { classifyEvent } from "../lib/events.js";
 
-import {
-  getNetwork,
-  stepSimulation,
-  resetSimulation,
-} from "../services/api";
-
-function Dashboard({ state, refreshState, navigate }) {
+function Dashboard({ state, refreshState, navigate, traffic }) {
   const [network, setNetwork] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [ml, setMl] = useState(null);
 
   useEffect(() => {
-    getNetwork()
-      .then(setNetwork)
-      .catch((err) => console.error(err));
-  }, []);
+    getNetwork().then(setNetwork).catch(() => {});
+    getMLStatus().then(setMl).catch(() => {});
+  }, [state]);
 
   const stats = state?.statistics || {};
   const messages = state?.messages || [];
   const events = state?.events || [];
+  const counts = countNodes(network || state?.network);
+  const liveNetwork = network || state?.network;
 
-  async function handleStep() {
-    try {
-      setBusy(true);
-      await stepSimulation();
-      await refreshState();
-      const nextNetwork = await getNetwork();
-      if (nextNetwork) setNetwork(nextNetwork);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setBusy(false);
-    }
-  }
+  const latestMessage = [...messages].reverse().find((m) => !m.copy_of) || null;
+  const latestHighRisk = (liveNetwork?.links || [])
+    .slice()
+    .sort((a, b) => Number(b.congestion || 0) - Number(a.congestion || 0))[0];
 
-  async function handleReset() {
-    try {
-      setBusy(true);
-      await resetSimulation();
-      await refreshState();
-      const nextNetwork = await getNetwork();
-      if (nextNetwork) setNetwork(nextNetwork);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setBusy(false);
-    }
-  }
+  const signature = useMemo(() => {
+    const riskLink = latestHighRisk;
+    const critical = messages.find((m) =>
+      ["HIGH", "CRITICAL"].includes(String(m.priority_class || "").toUpperCase())
+    );
+    const stored = messages.find((m) => m.status === "stored");
+    const delivered = messages.find((m) => m.status === "delivered" && m.integrity_verified);
+
+    return [
+      {
+        label: "PREDICT",
+        detail: riskLink
+          ? `${fmt(riskLink.congestion, 0)}% congestion on ${riskLink.id}`
+          : "No link telemetry yet",
+      },
+      {
+        label: "PROTECT",
+        detail: critical
+          ? `${critical.id} ${critical.priority_class}`
+          : "No prioritized message yet",
+      },
+      {
+        label: "ROUTE",
+        detail: stored
+          ? `${stored.id} buffered at ${stored.current_node}`
+          : events.some((e) => String(e.event).startsWith("REROUTE"))
+          ? "Alternate path selected"
+          : "Live routing idle",
+      },
+      {
+        label: "RECOVER",
+        detail: delivered
+          ? `${delivered.id} integrity verified`
+          : "Waiting for delivery",
+      },
+    ];
+  }, [latestHighRisk, messages, events]);
+
+  const recent = events.filter((event) =>
+    [
+      "sent",
+      "priority",
+      "risk",
+      "down",
+      "buffer",
+      "reroute",
+      "delivered",
+      "integrity",
+      "duplicate",
+      "info",
+    ].includes(classifyEvent(event.event))
+  );
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <div className="eyebrow">Mission Control</div>
-          <h1 className="page-title">Space DTN Command Center</h1>
-          <p className="page-description">
-            Monitor disruption-tolerant communication, message priority,
-            routing and delivery across the simulated space network.
-          </p>
-        </div>
-
-        <div className="header-actions">
-          <button
-            className="secondary-button"
-            onClick={handleReset}
-            disabled={busy}
-          >
-            Reset
-          </button>
-
-          <button
-            className="secondary-button"
-            onClick={handleStep}
-            disabled={busy}
-          >
-            {busy ? "Running..." : "Advance Simulation"}
-          </button>
-
-          <button
-            className="primary-button"
-            onClick={() => navigate("compare")}
-          >
-            Run Comparison Demo
-          </button>
-        </div>
-      </div>
-
-      {messages.length === 0 && (
-        <section className="card" style={{ marginBottom: 20 }}>
-          <div
-            className="card-body"
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 16,
-              flexWrap: "wrap",
-            }}
-          >
-            <div>
-              <h2 className="card-title">Start with the guided demo</h2>
-              <p className="card-subtitle">
-                Watch the same messages and the same link failure run through a
-                fixed-plan network and through Space DTN, side by side.
-              </p>
-            </div>
-
+      <PageHeader
+        eyebrow="Mission Control"
+        title="Can space data survive a disruption?"
+        subtitle="Monitor how SOYUZ predicts, prioritizes and recovers data across an unstable space network."
+        actions={
+          <>
             <button
               className="primary-button"
-              onClick={() => navigate("compare")}
+              onClick={async () => {
+                await traffic?.toggle?.();
+                navigate("simulation");
+              }}
+              disabled={traffic?.busy}
             >
-              Start Guided Demo
+              Start Simulation
             </button>
-          </div>
-        </section>
-      )}
+            <button className="secondary-button" onClick={() => navigate("compare")}>
+              Open Compare
+            </button>
+          </>
+        }
+      />
 
-      <div className="metric-grid">
-        <MetricCard
-          label="Network Availability"
-          value={`${Number(stats.network_availability || 0).toFixed(0)}%`}
-          foot={`${stats.active_links || 0}/${stats.total_links || 0} links active`}
-        />
-        <MetricCard
-          label="Messages"
-          value={stats.total_messages || 0}
-          foot={`${messages.filter((message) => String(message.priority_class || "").toUpperCase() === "HIGH").length} high priority`}
-        />
-        <MetricCard
-          label="Delivery Rate"
-          value={`${Number(stats.delivery_rate || 0).toFixed(0)}%`}
-          foot={`${stats.delivered || 0} delivered`}
-        />
-        <MetricCard
-          label="Simulation Time"
-          value={stats.simulation_time || 0}
-          foot="simulation ticks"
-        />
-      </div>
+      <MetricStrip
+        items={[
+          { label: "Satellites", value: counts.satellites || "N/A" },
+          { label: "Ground Stations", value: counts.stations || "N/A" },
+          { label: "Links", value: counts.links || "N/A" },
+          { label: "Active Links", value: `${stats.active_links ?? "N/A"}/${stats.total_links ?? "N/A"}` },
+          { label: "Buffered", value: na(stats.stored) },
+          { label: "Delivered", value: na(stats.delivered) },
+          { label: "Delivery Rate", value: pct(stats.delivery_rate) },
+        ]}
+      />
+
+      <SignatureFlow steps={signature} />
 
       <div className="dashboard-grid">
-        <section className="card network-host-card">
+        <section className="card">
           <div className="card-header">
             <div>
-              <h2 className="card-title">Space Communication Network</h2>
-              <p className="card-subtitle">
-                Live satellite and ground-station topology
-              </p>
+              <h2 className="card-title">TinyML Priority Engine</h2>
+              <p className="card-subtitle">How important is this message?</p>
             </div>
-
-            <button
-              className="secondary-button"
-              onClick={() => navigate("simulation")}
-            >
-              Open Simulation
-            </button>
           </div>
-
-          <NetworkGraph network={network} state={state} onAdvance={handleStep} busy={busy} interactive />
+          <div className="card-body">
+            <div className="mission-kv"><span>Model</span><strong>{ml?.model_format || ml?.model_type || "N/A"}</strong></div>
+            <div className="mission-kv"><span>Current message</span><strong>{latestMessage?.id || "N/A"}</strong></div>
+            <div className="mission-kv">
+              <span>Urgency</span>
+              <strong>{urgencyPct(latestMessage) != null ? `${urgencyPct(latestMessage)}%` : "N/A"}</strong>
+            </div>
+            <div className="mission-kv"><span>Priority</span><strong>{latestMessage?.priority_class || "N/A"}</strong></div>
+          </div>
         </section>
 
         <section className="card">
           <div className="card-header">
             <div>
-              <h2 className="card-title">Mission Actions</h2>
-              <p className="card-subtitle">Control the simulation</p>
+              <h2 className="card-title">Predictive Link-Risk</h2>
+              <p className="card-subtitle">How risky is this communication link?</p>
             </div>
           </div>
-
           <div className="card-body">
-            <div className="quick-actions">
-              <button className="action-card" onClick={() => navigate("simulation")}>
-                <div className="action-title">Disrupt Links</div>
-                <div className="action-text">
-                  Simulate unpredictable communication outages.
+            {latestHighRisk ? (
+              <>
+                <div className="mission-kv">
+                  <span>Current link</span>
+                  <strong>{latestHighRisk.source} → {latestHighRisk.target}</strong>
                 </div>
-              </button>
-
-              <button className="action-card" onClick={() => navigate("messages")}>
-                <div className="action-title">Send Message</div>
-                <div className="action-text">
-                  Create and prioritize mission data.
+                <div className="mission-kv">
+                  <span>Risk</span>
+                  <strong>{fmt(latestHighRisk.congestion, 0, "%")}</strong>
                 </div>
-              </button>
-
-              <button className="action-card" onClick={() => navigate("tinyml")}>
-                <div className="action-title">TinyML Engine</div>
-                <div className="action-text">
-                  Inspect the lightweight priority model.
+                <div className="mission-kv">
+                  <span>Classification</span>
+                  <strong>
+                    {Number(latestHighRisk.congestion) >= 80
+                      ? "HIGH"
+                      : Number(latestHighRisk.congestion) >= 50
+                      ? "MEDIUM"
+                      : "LOW"}
+                  </strong>
                 </div>
-              </button>
-
-              <button className="action-card" onClick={() => navigate("analytics")}>
-                <div className="action-title">Analytics</div>
-                <div className="action-text">
-                  Review delivery and network metrics.
-                </div>
-              </button>
-            </div>
-
-            <div style={{ height: 18 }} />
-
-            <div className="card">
-              <div className="card-header">
-                <div>
-                  <h3 className="card-title">Latest Messages</h3>
-                </div>
-              </div>
-
-              <div className="table-wrapper">
-                {messages.length === 0 ? (
-                  <div className="empty-state">No messages in the simulation.</div>
-                ) : (
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>ID</th>
-                        <th>Priority</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {messages.slice(0, 5).map((message) => (
-                        <tr key={message.id}>
-                          <td className="mono">{message.id}</td>
-                          <td
-                            className={`priority-${String(
-                              message.priority_class || "low"
-                            ).toLowerCase()}`}
-                          >
-                            {message.priority_class}
-                          </td>
-                          <td>
-                            <StatusBadge status={message.status} />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </div>
+                <p className="card-subtitle" style={{ marginTop: 10 }}>
+                  Simulated from live congestion and latency. Not orbital failure prediction.
+                </p>
+              </>
+            ) : (
+              <div className="empty-state">Unavailable</div>
+            )}
           </div>
         </section>
 
-        <section className="card full-width">
+        <section className="card network-host-card">
           <div className="card-header">
             <div>
-              <h2 className="card-title">Event Stream</h2>
-              <p className="card-subtitle">Recent DTN simulation events</p>
+              <h2 className="card-title">Live Network</h2>
+              <p className="card-subtitle">
+                {counts.satellites} satellites · {counts.stations} ground stations · {counts.links} links
+              </p>
             </div>
+            <button className="primary-button" onClick={() => navigate("simulation")}>
+              Open Live Simulation
+            </button>
           </div>
+          <NetworkGraph network={liveNetwork} state={state} compact />
+        </section>
 
-          <div className="card-body">
-            {events.length === 0 ? (
-              <div className="empty-state">No simulation events yet.</div>
-            ) : (
-              <div className="event-list">
-                {events.slice(0, 10).map((event, index) => (
-                  <div
-                    className="event-item"
-                    key={`${event.time}-${index}`}
-                  >
-                    <div className="event-time">T+{event.time}</div>
-                    <div className="event-text">{event.event}</div>
-                  </div>
-                ))}
-              </div>
-            )}
+        <section className="card full-width">
+          <EventTimeline events={recent} />
+          <div style={{ marginTop: 12 }}>
+            <button className="secondary-button" onClick={refreshState}>
+              Refresh
+            </button>
           </div>
         </section>
       </div>

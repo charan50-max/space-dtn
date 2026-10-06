@@ -7,7 +7,15 @@ import {
 } from "lucide-react";
 import SpaceScene from "./SpaceScene";
 
-export default function NetworkGraph({ network, state, onAdvance, busy = false }) {
+export default function NetworkGraph({
+  network,
+  state,
+  onAdvance,
+  busy = false,
+  selectedLinkId,
+  onSelectLink,
+  compact = false,
+}) {
   const [focusMode, setFocusMode] = useState(false);
 
   useEffect(() => {
@@ -40,6 +48,7 @@ export default function NetworkGraph({ network, state, onAdvance, busy = false }
           : "network-card"
       }
     >
+      {!compact && (
       <div className="network-header">
         <div>
           <div className="network-title">Space Network</div>
@@ -80,9 +89,15 @@ export default function NetworkGraph({ network, state, onAdvance, busy = false }
           </button>
         </div>
       </div>
+      )}
 
       <div className="network-3d-container">
-        <SpaceScene network={network} state={state} />
+        <SpaceScene
+          network={network}
+          state={state}
+          selectedLinkId={selectedLinkId}
+          onSelectLink={onSelectLink}
+        />
       </div>
 
       {focusMode && (

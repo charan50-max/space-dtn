@@ -533,6 +533,9 @@ const _mat = new THREE.Matrix4();
 const COLOR_CORE_ACTIVE = new THREE.Color("#b8f9ff");
 const COLOR_GLOW_ACTIVE = new THREE.Color("#00e5ff");
 const COLOR_DOWN = new THREE.Color("#ff304f");
+const COLOR_RISK = new THREE.Color("#ff9d3d");
+const COLOR_RESTORE = new THREE.Color("#ffffff");
+const DISRUPTION_IDS = new Set(["L4", "L5"]);
 
 /* Smallest distance from the Earth's centre along part of a curve. */
 function minCurveRadius(curve, t0 = 0, t1 = 1, samples = 24) {
@@ -739,13 +742,21 @@ function writeBeamMatrices(mesh, points) {
 }
 
 function CommunicationLink({
+  id,
   source,
   target,
   status,
+  congestion = 0,
   highlighted,
+  selected,
+  onClick,
 }) {
   const glowRef = useRef();
   const coreRef = useRef();
+  const pickRef = useRef();
+  const badgeRef = useRef();
+  const wasDownRef = useRef(false);
+  const restoreUntilRef = useRef(0);
 
   const points = useMemo(
     () =>
@@ -756,13 +767,16 @@ function CommunicationLink({
     []
   );
 
-  const isActive = !["disrupted", "down", "inactive"].includes(status);
+  const isActive = !["disrupted", "down", "inactive", "unusable"].includes(status);
+  const isRisk = isActive && Number(congestion) >= 50;
+  const candidate = DISRUPTION_IDS.has(id);
 
   useFrame((state) => {
+    const now = state.clock.elapsedTime;
     const entry = getLinkCurve(
       source,
       target,
-      state.clock.elapsedTime
+      now
     );
 
     if (!entry) return;
@@ -773,32 +787,53 @@ function CommunicationLink({
 
     writeBeamMatrices(glowRef.current, points);
     writeBeamMatrices(coreRef.current, points);
+    writeBeamMatrices(pickRef.current, points);
+
+    if (!isActive && !wasDownRef.current) {
+      wasDownRef.current = true;
+    } else if (isActive && wasDownRef.current) {
+      wasDownRef.current = false;
+      restoreUntilRef.current = now + 1.2;
+    }
+
+    const restoring = now < restoreUntilRef.current;
+    const core = restoring
+      ? COLOR_RESTORE
+      : !isActive
+      ? COLOR_DOWN
+      : isRisk
+      ? COLOR_RISK
+      : COLOR_CORE_ACTIVE;
+    const glow = restoring
+      ? COLOR_RESTORE
+      : !isActive
+      ? COLOR_DOWN
+      : isRisk
+      ? COLOR_RISK
+      : COLOR_GLOW_ACTIVE;
 
     if (coreRef.current) {
-      coreRef.current.material.color.copy(
-        isActive ? COLOR_CORE_ACTIVE : COLOR_DOWN
-      );
-      coreRef.current.material.opacity = highlighted
-        ? 1
-        : isActive
-        ? 0.82
-        : 0.92;
+      coreRef.current.material.color.copy(core);
+      coreRef.current.material.opacity = highlighted || selected ? 1 : isActive ? 0.82 : 0.92;
     }
 
     if (glowRef.current) {
-      glowRef.current.material.color.copy(
-        isActive ? COLOR_GLOW_ACTIVE : COLOR_DOWN
-      );
-      glowRef.current.material.opacity = highlighted
-        ? 0.32
-        : isActive
-        ? 0.13
-        : 0.10;
+      glowRef.current.material.color.copy(glow);
+      glowRef.current.material.opacity = highlighted || selected ? 0.36 : isActive ? 0.13 : 0.12;
+    }
+
+    if (badgeRef.current) {
+      entry.curve.getPoint(0.5, badgeRef.current.position);
     }
   });
 
   return (
-    <group>
+    <group
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick?.();
+      }}
+    >
       <instancedMesh
         ref={glowRef}
         args={[undefined, undefined, LINK_SEGMENTS]}
@@ -828,6 +863,27 @@ function CommunicationLink({
           depthWrite={false}
         />
       </instancedMesh>
+
+      <instancedMesh
+        ref={pickRef}
+        args={[undefined, undefined, LINK_SEGMENTS]}
+        frustumCulled={false}
+        visible={false}
+        className="space-link-hit"
+      >
+        <cylinderGeometry args={[0.14, 0.14, 1, 8, 1, true]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </instancedMesh>
+
+      {(candidate || !isActive) && (
+        <group ref={badgeRef}>
+          <Html center distanceFactor={10} pointerEvents="none">
+            <div className="candidate-chip">
+              {!isActive ? "LINK DOWN" : "DISRUPTION CANDIDATE"}
+            </div>
+          </Html>
+        </group>
+      )}
     </group>
   );
 }
@@ -846,6 +902,9 @@ function MessageMarker({ message }) {
   const fromNodeRef = useRef(initialFrom);
   const toNodeRef = useRef(message?.current_node);
   const animationStartRef = useRef(null);
+  const [hopLabel, setHopLabel] = useState(
+    `${message?.source || ""} → ${message?.current_node || ""}`
+  );
 
   const isHigh =
     String(message?.priority_class || "LOW").toUpperCase() === "HIGH";
@@ -871,6 +930,7 @@ function MessageMarker({ message }) {
       toNodeRef.current = currentNode;
       previousNodeRef.current = currentNode;
       animationStartRef.current = now;
+      setHopLabel(`${fromNodeRef.current} → ${toNodeRef.current}`);
     }
 
     const animationStart = animationStartRef.current;
@@ -957,10 +1017,10 @@ function MessageMarker({ message }) {
           <strong>{message.id}</strong>
           <span>
             {isStored
-              ? "STORED"
+              ? `BUFFERED at ${message.current_node}`
               : isCopy
               ? "COPY"
-              : message.priority_class || "LOW"}
+              : hopLabel || message.priority_class || "LOW"}
           </span>
         </div>
       </Html>
@@ -1043,6 +1103,8 @@ function ArrivalCallout({ event, slot }) {
 function SceneContents({
   network,
   state,
+  selectedLinkId,
+  onSelectLink,
 }) {
 
   const satelliteRefs =
@@ -1064,7 +1126,11 @@ function SceneContents({
   const links = useMemo(
     () =>
       rawLinks
-        .map(normalizeLink)
+        .map((link) => ({
+          ...normalizeLink(link),
+          congestion: Number(link.congestion || 0),
+          latency: link.latency,
+        }))
         .filter(
           (link) =>
             link.source &&
@@ -1363,6 +1429,7 @@ function SceneContents({
               link.id ??
               `link-${index}`
             }
+            id={link.id}
             source={
               link.source
             }
@@ -1372,11 +1439,14 @@ function SceneContents({
             status={
               link.status
             }
+            congestion={link.congestion}
+            selected={selectedLinkId === link.id}
             highlighted={
               isRouteLinkHighlighted(link.source, link.target) ||
               selected === link.source ||
               selected === link.target
             }
+            onClick={() => onSelectLink?.(link)}
           />
         )
       )}
@@ -1485,7 +1555,7 @@ function SceneContents({
             &nbsp; • &nbsp;
             <b>SCROLL</b> zoom
             &nbsp; • &nbsp;
-            <b>CLICK</b> node
+            <b>CLICK</b> a link to inspect
           </div>
         </div>
       </Html>
@@ -1496,6 +1566,8 @@ function SceneContents({
 export default function SpaceScene({
   network,
   state,
+  selectedLinkId,
+  onSelectLink,
 }) {
   return (
     <div className="space-scene">
@@ -1528,6 +1600,8 @@ export default function SpaceScene({
         <SceneContents
           network={network}
           state={state}
+          selectedLinkId={selectedLinkId}
+          onSelectLink={onSelectLink}
         />
       </Canvas>
     </div>

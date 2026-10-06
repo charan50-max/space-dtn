@@ -111,11 +111,50 @@ export async function resetLinkConditions(linkId) {
 }
 
 export async function disruptLink(linkId) {
-  return setLinkLatency(linkId, 100);
+  return request("/api/simulation/disrupt", {
+    method: "POST",
+    body: JSON.stringify({
+      simulation_id: getSimulationId(),
+      link_id: linkId,
+    }),
+  });
 }
 
 export async function restoreLink(linkId) {
-  return resetLinkConditions(linkId);
+  return request("/api/simulation/restore", {
+    method: "POST",
+    body: JSON.stringify({
+      simulation_id: getSimulationId(),
+      link_id: linkId,
+    }),
+  });
+}
+
+export async function getCompareState() {
+  return request("/api/simulation/compare/state");
+}
+
+export async function resetCompare() {
+  return request("/api/simulation/compare/reset", { method: "POST" });
+}
+
+export async function stepCompare() {
+  return request("/api/simulation/compare/step", { method: "POST" });
+}
+
+export async function runCompare() {
+  return request("/api/simulation/compare/run", { method: "POST" });
+}
+
+export async function runBenchmark(params = {}) {
+  const query = new URLSearchParams(
+    Object.fromEntries(
+      Object.entries(params).filter(
+        ([, value]) => value !== "" && value !== null && value !== undefined
+      )
+    )
+  ).toString();
+  return request(`/api/simulation/compare/benchmark?${query}`);
 }
 
 // Overlay the live link/node state of the shared simulator on top of the

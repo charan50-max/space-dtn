@@ -20,7 +20,8 @@ function Sidebar({ page, navigate, state }) {
         </div>
 
         <div>
-          <div className="brand-title">SPACE DTN</div>
+          <div className="brand-title">SOYUZ</div>
+          <div className="brand-subtitle">SPACE DTN</div>
           <div className="brand-subtitle">
             ROUTING & PRIORITY ENGINE
           </div>
